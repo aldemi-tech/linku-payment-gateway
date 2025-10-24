@@ -27,7 +27,7 @@
     "monitor:deployment:health": "node scripts/monitor-health.js"
   },
   "engines": {
-    "node": "18"
+    "node": ">=18.0.0"
   },
   "keywords": [
     "firebase",

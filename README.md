@@ -1,6 +1,29 @@
-# Payment Gateway Cloud Functions
+# 🚀 Linku Payment Gateway
 
-Firebase Cloud Functions para pasarela de pagos con soporte para múltiples proveedores y métodos de tokenización.
+**Firebase Cloud Functions para integración completa de pagos**
+
+> Integración real con Stripe, Transbank y MercadoPago usando SDKs oficiales
+
+---
+
+## ⚡ **Setup Rápido**
+
+```bash
+# 1. Clonar repositorio  
+git clone https://github.com/aldemi-tech/linku-payment-gateway.git
+cd linku-payment-gateway
+
+# 2. Setup automático (crea repo, secrets, deploy)
+./setup.sh
+```
+
+**¡Eso es todo!** El script hace:
+- ✅ Instala dependencias
+- ✅ Genera Firebase CI token seguramente  
+- ✅ Configura GitHub Secrets
+- ✅ Despliega automáticamente a Firebase
+
+---
 
 ## 🎯 Características
 
