@@ -26,7 +26,6 @@
     "check:breaking-changes": "node scripts/check-breaking-changes.js",
     "monitor:deployment:health": "node scripts/monitor-health.js",
     "validate:main": "npm run lint && npm run test && npm run build",
-    "postinstall": "npm run build",
     "husky:install": "husky"
   },
   "engines": {
