@@ -39,10 +39,23 @@ export class TransbankProvider {
     }
 
     // Configure Transbank SDK
-    if (this.environment === "production") {
-      OneClick.configureForProduction(this.commerceCode, this.apiKey);
-    } else {
-      OneClick.configureForTesting();
+    try {
+      if (this.environment === "production") {
+        OneClick.configureForProduction(this.commerceCode, this.apiKey);
+      } else {
+        // Use integration configuration with default values
+        OneClick.configureForIntegration(
+          this.commerceCode,
+          this.apiKey
+        );
+      }
+    } catch (error) {
+      console.warn("Failed to configure Transbank SDK, using default integration settings:", error);
+      // Fallback to default integration settings
+      OneClick.configureForIntegration(
+        IntegrationCommerceCodes.ONECLICK_MALL,
+        IntegrationApiKeys.WEBPAY
+      );
     }
   }
 

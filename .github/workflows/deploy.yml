@@ -34,6 +34,15 @@ jobs:
         run: npm run build
 
       - name: 🚀 Deploy to Firebase
+        env:
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          STRIPE_PUBLIC_KEY: ${{ secrets.STRIPE_PUBLIC_KEY }}
+          STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
+          TRANSBANK_COMMERCE_CODE: ${{ secrets.TRANSBANK_COMMERCE_CODE }}
+          TRANSBANK_API_KEY: ${{ secrets.TRANSBANK_API_KEY }}
+          TRANSBANK_ENVIRONMENT: ${{ secrets.TRANSBANK_ENVIRONMENT }}
+          MERCADOPAGO_ACCESS_TOKEN: ${{ secrets.MERCADOPAGO_ACCESS_TOKEN }}
+          MERCADOPAGO_ENVIRONMENT: ${{ secrets.MERCADOPAGO_ENVIRONMENT }}
         run: |
           npm install -g firebase-tools
           firebase use linku-app --token ${{ secrets.FIREBASE_TOKEN }}

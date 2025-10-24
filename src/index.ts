@@ -61,35 +61,59 @@ const createTimestamp = () => Timestamp.now();
 
 // Initialize providers on cold start
 const initializeProviders = () => {
-  const configs: PaymentProviderConfig[] = [
-    {
+  const configs: PaymentProviderConfig[] = [];
+
+  // Stripe configuration
+  const stripeSecretKey = functions.config().stripe?.secret_key || process.env.STRIPE_SECRET_KEY;
+  if (stripeSecretKey) {
+    configs.push({
       provider: "stripe",
       method: "direct",
       publicKey: functions.config().stripe?.public_key || process.env.STRIPE_PUBLIC_KEY,
-      secretKey: functions.config().stripe?.secret_key || process.env.STRIPE_SECRET_KEY,
+      secretKey: stripeSecretKey,
       webhookSecret: functions.config().stripe?.webhook_secret || process.env.STRIPE_WEBHOOK_SECRET,
       enabled: true,
-    },
-    {
+    });
+    console.log("Stripe provider configuration added");
+  } else {
+    console.log("Stripe API key not found, skipping Stripe provider");
+  }
+
+  // Transbank configuration
+  const transbankApiKey = functions.config().transbank?.api_key || process.env.TRANSBANK_API_KEY;
+  if (transbankApiKey) {
+    configs.push({
       provider: "transbank",
       method: "redirect",
       commerceCode: functions.config().transbank?.commerce_code || process.env.TRANSBANK_COMMERCE_CODE,
-      apiKey: functions.config().transbank?.api_key || process.env.TRANSBANK_API_KEY,
+      apiKey: transbankApiKey,
       environment: functions.config().transbank?.environment || process.env.TRANSBANK_ENVIRONMENT || "integration",
       enabled: true,
-    },
-    {
+    });
+    console.log("Transbank provider configuration added");
+  } else {
+    console.log("Transbank API key not found, skipping Transbank provider");
+  }
+
+  // MercadoPago configuration
+  const mercadoPagoAccessToken = functions.config().mercadopago?.access_token || process.env.MERCADOPAGO_ACCESS_TOKEN;
+  if (mercadoPagoAccessToken) {
+    configs.push({
       provider: "mercadopago",
       method: "direct",
-      accessToken: functions.config().mercadopago?.access_token || process.env.MERCADOPAGO_ACCESS_TOKEN,
+      accessToken: mercadoPagoAccessToken,
       environment: functions.config().mercadopago?.environment || process.env.MERCADOPAGO_ENVIRONMENT || "sandbox",
       enabled: true,
-    },
-  ];
+    });
+    console.log("MercadoPago provider configuration added");
+  } else {
+    console.log("MercadoPago access token not found, skipping MercadoPago provider");
+  }
 
   PaymentProviderFactory.initialize(configs);
   console.log("Payment gateway initialized with providers:", {
     providers: PaymentProviderFactory.getAvailableProviders(),
+    totalConfigs: configs.length
   });
 };
 
