@@ -36,6 +36,7 @@ jobs:
       - name: 🚀 Deploy to Firebase
         run: |
           npm install -g firebase-tools
+          firebase use linku-app --token ${{ secrets.FIREBASE_TOKEN }}
           firebase deploy --only functions --token ${{ secrets.FIREBASE_TOKEN }}
 
       - name: ✅ Deployment Complete
