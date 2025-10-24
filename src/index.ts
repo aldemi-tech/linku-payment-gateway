@@ -470,172 +470,69 @@ export const refundPayment = functions.https.onCall(
 // ==================== WEBHOOK HANDLERS ====================
 
 /**
- * Handle Stripe webhooks
+ * Unified webhook handler for all payment providers
+ * Route: /webhook/{provider} where provider is: stripe, transbank, mercadopago
  */
-export const stripeWebhook = functions.https.onRequest(async (req, res) => {
+export const webhook = functions.https.onRequest(async (req, res) => {
   try {
     if (req.method !== "POST") {
       res.status(405).send("Method Not Allowed");
       return;
     }
 
-    const signature = req.headers["stripe-signature"] as string;
-    const payload = JSON.stringify(req.body);
+    // Extract provider from URL path
+    // URL: /webhook/stripe -> path = /webhook/stripe -> provider = stripe
+    const pathParts = req.path.split("/");
+    const provider = pathParts.at(-1)?.toLowerCase();
 
-    const provider = PaymentProviderFactory.getProvider("stripe");
-    
-    if (!provider.verifyWebhook(payload, signature)) {
-      res.status(401).send("Invalid signature");
-      return;
-    }
-
-    await provider.handleWebhook(req.body);
-
-    res.status(200).send({ received: true });
-  } catch (error: any) {
-    console.error("Stripe webhook error:", error);
-    res.status(500).send("Webhook processing failed");
-  }
-});
-
-/**
- * Handle Transbank webhooks
- */
-export const transbankWebhook = functions.https.onRequest(async (req, res) => {
-  try {
-    if (req.method !== "POST") {
-      res.status(405).send("Method Not Allowed");
-      return;
-    }
-
-    const provider = PaymentProviderFactory.getProvider("transbank");
-    await provider.handleWebhook(req.body);
-
-    res.status(200).send({ received: true });
-  } catch (error: any) {
-    console.error("Transbank webhook error:", error);
-    res.status(500).send("Webhook processing failed");
-  }
-});
-
-/**
- * Handle MercadoPago webhooks
- */
-export const mercadoPagoWebhook = functions.https.onRequest(async (req, res) => {
-  try {
-    if (req.method !== "POST") {
-      res.status(405).send("Method Not Allowed");
-      return;
-    }
-
-    const provider = PaymentProviderFactory.getProvider("mercadopago");
-    await provider.handleWebhook(req.body);
-
-    res.status(200).send({ received: true });
-  } catch (error: any) {
-    console.error("MercadoPago webhook error:", error);
-    res.status(500).send("Webhook processing failed");
-  }
-});
-
-// ==================== UTILITY FUNCTIONS ====================
-
-/**
- * Get user's saved cards
- */
-export const getUserCards = functions.https.onCall(
-  async (data: { user_id: string }, context): Promise<ApiResponse> => {
-    try {
-      if (!context.auth) {
-        throw new PaymentGatewayError("Unauthenticated", "UNAUTHENTICATED", 401);
-      }
-
-      if (data.user_id !== context.auth.uid) {
-        throw new PaymentGatewayError("Unauthorized", "UNAUTHORIZED", 403);
-      }
-
-      const cardsSnapshot = await db
-        .collection("payment_cards")
-        .where("user_id", "==", data.user_id)
-        .orderBy("is_default", "desc")
-        .orderBy("created_at", "desc")
-        .get();
-
-      const cards = cardsSnapshot.docs.map((doc) => {
-        const card = doc.data() as PaymentCard;
-        // Return safe card data
-        return {
-          card_id: card.card_id,
-          card_holder_name: card.card_holder_name,
-          card_last_four: card.card_last_four,
-          card_brand: card.card_brand,
-          card_type: card.card_type,
-          expiration_month: card.expiration_month,
-          expiration_year: card.expiration_year,
-          alias: card.alias,
-          is_default: card.is_default,
-          created_at: card.created_at,
-        };
+    if (!provider || !["stripe", "transbank", "mercadopago"].includes(provider)) {
+      res.status(400).json({
+        error: "Invalid provider. Use: /webhook/{stripe|transbank|mercadopago}"
       });
-
-      return {
-        success: true,
-        data: { cards },
-      };
-    } catch (error: any) {
-      const gatewayError = handleError(error);
-      return {
-        success: false,
-        error: {
-          code: gatewayError.code,
-          message: gatewayError.message,
-        },
-      };
+      return;
     }
-  }
-);
 
-/**
- * Delete a saved card
- */
-export const deleteCard = functions.https.onCall(
-  async (data: { card_id: string }, context): Promise<ApiResponse> => {
-    try {
-      if (!context.auth) {
-        throw new PaymentGatewayError("Unauthenticated", "UNAUTHENTICATED", 401);
-      }
-
-      validateRequiredFields(data, ["card_id"]);
-
-      const cardDoc = await db.collection("payment_cards").doc(data.card_id).get();
-      
-      if (!cardDoc.exists) {
-        throw new PaymentGatewayError("Card not found", "NOT_FOUND", 404);
-      }
-
-      const card = cardDoc.data() as PaymentCard;
-
-      if (card.user_id !== context.auth.uid) {
-        throw new PaymentGatewayError("Unauthorized", "UNAUTHORIZED", 403);
-      }
-
-      await db.collection("payment_cards").doc(data.card_id).delete();
-
-      return {
-        success: true,
-        data: {
-          message: "Card deleted successfully",
-        },
-      };
-    } catch (error: any) {
-      const gatewayError = handleError(error);
-      return {
-        success: false,
-        error: {
-          code: gatewayError.code,
-          message: gatewayError.message,
-        },
-      };
+    // Check if provider is available
+    if (!PaymentProviderFactory.isProviderAvailable(provider as PaymentProvider)) {
+      res.status(400).json({
+        error: `Provider '${provider}' is not configured or available`
+      });
+      return;
     }
+
+    const paymentProvider = PaymentProviderFactory.getProvider(provider as PaymentProvider);
+
+    // Handle Stripe signature verification
+    if (provider === "stripe") {
+      const signature = req.headers["stripe-signature"] as string;
+      const payload = JSON.stringify(req.body);
+
+      if (!paymentProvider.verifyWebhook(payload, signature)) {
+        res.status(401).json({ error: "Invalid signature" });
+        return;
+      }
+    }
+
+    // Process webhook
+    await paymentProvider.handleWebhook(req.body);
+
+    console.log(`${provider} webhook processed successfully`);
+    res.status(200).json({ 
+      received: true, 
+      provider: provider,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error: any) {
+    console.error(`Webhook processing error:`, {
+      provider: req.path,
+      error: error.message,
+      stack: error.stack
+    });
+    
+    res.status(500).json({
+      error: "Webhook processing failed",
+      message: error.message
+    });
   }
-);
+});
