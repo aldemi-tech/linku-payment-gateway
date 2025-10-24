@@ -1,0 +1,54 @@
+# Compiled output
+/lib
+/node_modules
+
+# Development files
+.git
+.gitignore
+.husky
+*.md
+*.log
+*.tmp
+
+# Test files
+src/__tests__
+**/*.test.ts
+**/*.test.js
+**/*.spec.ts
+**/*.spec.js
+jest.config.js
+coverage/
+
+# Development dependencies
+.eslintrc*
+.prettierrc*
+tsconfig*.json
+
+# Environment files
+.env*
+!.env.example
+
+# IDE files
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# CI/CD files
+.github/
+.gitlab-ci.yml
+.travis.yml
+
+# Documentation
+README*.md
+CHANGELOG.md
+LICENSE
+docs/
+
+# Backup files
+*.bak
+*.backup
