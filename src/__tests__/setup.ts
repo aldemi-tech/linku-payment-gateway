@@ -42,10 +42,11 @@ jest.setTimeout(10000);
 
 // Variables globales para testing
 declare global {
+  // eslint-disable-next-line @typescript-eslint/no-namespace
   namespace NodeJS {
     interface Global {
-      mockFirestore: any;
-      mockAuth: any;
+      mockFirestore: any; // eslint-disable-line @typescript-eslint/no-explicit-any
+      mockAuth: any; // eslint-disable-line @typescript-eslint/no-explicit-any
     }
   }
 }

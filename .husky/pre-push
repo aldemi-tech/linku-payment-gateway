@@ -1,0 +1,51 @@
+#!/bin/bash
+# Pre-push hook para validar tests y lint solo en main branch
+
+# Obtener la branch actual
+current_branch=$(git symbolic-ref HEAD | sed -e 's,.*/\(.*\),\1,')
+
+# Colores para output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+echo -e "${BLUE}🔍 Pre-push validation${NC}"
+echo -e "📋 Current branch: ${YELLOW}${current_branch}${NC}"
+
+# Solo validar en main branch
+if [ "$current_branch" = "main" ]; then
+    echo -e "${YELLOW}⚡ Running validations for main branch...${NC}"
+    
+    # Ejecutar linter
+    echo -e "${BLUE}🧹 Running linter...${NC}"
+    npm run lint
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}❌ Linter failed! Fix linting errors before pushing to main.${NC}"
+        exit 1
+    fi
+    
+    # Ejecutar tests
+    echo -e "${BLUE}🧪 Running tests...${NC}"
+    npm test
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}❌ Tests failed! Fix failing tests before pushing to main.${NC}"
+        exit 1
+    fi
+    
+    # Ejecutar build
+    echo -e "${BLUE}🔨 Building...${NC}"
+    npm run build
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}❌ Build failed! Fix build errors before pushing to main.${NC}"
+        exit 1
+    fi
+    
+    echo -e "${GREEN}✅ All validations passed! Pushing to main...${NC}"
+else
+    echo -e "${GREEN}✅ Development branch - skipping validations${NC}"
+    echo -e "ℹ️  Push allowed without tests/lint for branch: ${current_branch}"
+fi
+
+exit 0
