@@ -1,0 +1,32 @@
+# Payment Gateway Functions Code Owners
+# These users/teams will be automatically requested for review when PRs are opened.
+
+# Global owners - all files require review from these users
+* @team-backend @team-devops
+
+# Critical configuration files require additional review
+package.json @team-devops @senior-developers
+tsconfig.json @team-devops @senior-developers
+firebase.json @team-devops @senior-developers
+
+# CI/CD workflows require DevOps team approval
+/.github/workflows/ @team-devops @platform-engineers
+
+# Production deployment scripts require senior approval
+/scripts/ @team-devops @senior-developers
+
+# Core payment provider implementations require payment team review
+/src/providers/ @team-payments @senior-developers
+
+# Types and interfaces require architecture review
+/src/types/ @team-backend @architects
+
+# Cloud Functions entry point requires senior review
+/src/index.ts @team-backend @senior-developers @architects
+
+# Security-related configurations
+sonar-project.properties @team-security @team-devops
+.github/workflows/deploy-production.yml @team-security @team-devops @senior-developers
+
+# Documentation requires product team review
+*.md @team-product @team-backend

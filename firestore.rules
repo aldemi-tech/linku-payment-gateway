@@ -1,0 +1,64 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Payment Cards Collection
+    match /paymentCards/{cardId} {
+      // Solo lectura/escritura para usuarios autenticados
+      // En producción, puedes agregar más validaciones específicas
+      allow read, write: if request.auth != null;
+      
+      // Validaciones de datos
+      allow create: if request.auth != null 
+        && request.resource.data.keys().hasAll([
+          'masked_number', 'brand', 'token', 'created_at', 'user_id'
+        ])
+        && request.resource.data.user_id == request.auth.uid;
+      
+      allow update: if request.auth != null 
+        && resource.data.user_id == request.auth.uid
+        && request.resource.data.user_id == request.auth.uid;
+        
+      allow delete: if request.auth != null 
+        && resource.data.user_id == request.auth.uid;
+    }
+    
+    // Transactions Collection  
+    match /transactions/{transactionId} {
+      allow read, write: if request.auth != null;
+      
+      allow create: if request.auth != null
+        && request.resource.data.keys().hasAll([
+          'amount', 'currency', 'status', 'provider', 'created_at', 'user_id'
+        ])
+        && request.resource.data.user_id == request.auth.uid;
+        
+      allow update: if request.auth != null 
+        && resource.data.user_id == request.auth.uid;
+    }
+    
+    // Payment Methods Collection
+    match /paymentMethods/{methodId} {
+      allow read, write: if request.auth != null;
+      
+      allow create: if request.auth != null
+        && request.resource.data.user_id == request.auth.uid;
+        
+      allow update: if request.auth != null 
+        && resource.data.user_id == request.auth.uid;
+    }
+    
+    // Admin Collections (solo para admin)
+    match /admin/{document=**} {
+      allow read, write: if request.auth != null 
+        && request.auth.token.admin == true;
+    }
+    
+    // Logs Collection (solo lectura para admin)
+    match /logs/{logId} {
+      allow read: if request.auth != null 
+        && request.auth.token.admin == true;
+      allow write: if false; // Solo escritura desde server-side
+    }
+  }
+}

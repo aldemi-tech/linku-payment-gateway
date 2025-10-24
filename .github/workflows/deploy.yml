@@ -1,0 +1,45 @@
+name: Deploy to Firebase
+
+on:
+  push:
+    branches: 
+      - main
+
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 🔍 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: ⚡ Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          cache: 'npm'
+
+      - name: 📦 Install Dependencies
+        run: npm ci
+
+      - name: 🧹 Run Linter
+        run: npm run lint
+
+      - name: 🧪 Run Tests
+        run: npm test
+
+      - name: 🔨 Build Functions
+        run: npm run build
+
+      - name: 🚀 Deploy to Firebase
+        run: |
+          npm install -g firebase-tools
+          firebase deploy --only functions --token ${{ secrets.FIREBASE_TOKEN }}
+
+      - name: ✅ Deployment Complete
+        run: |
+          echo "🎉 Functions deployed successfully to linku-app!"
+          echo "📍 Project: linku-app"
+          echo "🌐 Functions URL: https://us-central1-linku-app.cloudfunctions.net"
