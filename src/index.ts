@@ -137,6 +137,18 @@ const initializeProviders = () => {
 // Initialize on module load
 initializeProviders();
 
+export const testFunctionOnRequest = functions.https.onRequest(async (req, res) => {
+  res.json({
+    success: true,
+    data: req.body,
+    context: {
+      method: req.method,
+      headers: req.headers,
+    },
+  });
+});
+
+
 export const testFunction = functions.https.onCall((data, context) => {
   return {
     success: true,
