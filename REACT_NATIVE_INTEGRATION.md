@@ -6,9 +6,11 @@ Integrar las Cloud Functions del payment gateway en tu aplicación React Native 
 ## 🏗️ Arquitectura del Sistema
 
 ### **Tipos de Integración por Proveedor**
-- ✅ **Stripe**: Tokenización directa (sin redirección)
-- ✅ **MercadoPago**: Tokenización directa (sin redirección)  
-- ✅ **Transbank**: Flujo de redirección (WebView requerido)
+- ✅ **Stripe**: Tokenización directa (sin redirección) - **Siempre requiere CVC en pagos**
+- ✅ **MercadoPago**: Tokenización directa (sin redirección) - **CVC configurable por tarjeta**
+- ✅ **Transbank**: Flujo de redirección (WebView requerido) - **Sin CVC necesario**
+
+> **⚠️ Importante**: MercadoPago permite configurar si una tarjeta guardada requiere CVC. El campo `requires_cvc` en los datos de la tarjeta indica si se debe solicitar CVC al usar esa tarjeta.
 
 ### **Cloud Functions Disponibles**
 ```
@@ -34,13 +36,54 @@ npm install react-native-webview  # Para flujos de redirección
 // firebase.js
 import functions from '@react-native-firebase/functions';
 import firestore from '@react-native-firebase/firestore';
+import auth from '@react-native-firebase/auth';
 
 // Para desarrollo (emulator)
 if (__DEV__) {
   functions().useFunctionsEmulator('http://localhost:5001');
 }
 
-export { functions, firestore };
+export { functions, firestore, auth };
+```
+
+### **3. ⚠️ IMPORTANTE: Configuración de Autenticación para Cloud Functions**
+
+**Problem**: Las Cloud Functions no detectan automáticamente la sesión de Firebase Auth desde React Native.
+
+**Solución**: Debes asegurarte de que el usuario esté autenticado antes de llamar las functions:
+
+```javascript
+// services/AuthService.js
+import auth from '@react-native-firebase/auth';
+
+class AuthService {
+  
+  // Verificar si el usuario está autenticado
+  static async ensureAuthenticated() {
+    const currentUser = auth().currentUser;
+    
+    if (!currentUser) {
+      throw new Error('Usuario no autenticado. Inicia sesión primero.');
+    }
+    
+    // Verificar que el token no haya expirado
+    try {
+      await currentUser.getIdToken(true); // Force refresh del token
+      return currentUser;
+    } catch (error) {
+      console.error('Error refreshing token:', error);
+      throw new Error('Sesión expirada. Inicia sesión nuevamente.');
+    }
+  }
+  
+  // Obtener el ID token actual
+  static async getCurrentIdToken() {
+    const user = await this.ensureAuthenticated();
+    return await user.getIdToken();
+  }
+}
+
+export default AuthService;
 ```
 
 ## 💳 Implementación de Flujos de Pago
@@ -49,17 +92,21 @@ export { functions, firestore };
 
 ```javascript
 // services/PaymentService.js
-import { functions } from '../firebase';
+import { functions, auth } from '../firebase';
+import AuthService from './AuthService';
 
 class PaymentService {
   
   // Tokenizar tarjeta directamente (Stripe/MercadoPago)
   async tokenizeCardDirect(cardData, provider = 'stripe') {
     try {
+      // ⚠️ CRÍTICO: Verificar autenticación antes de llamar la function
+      await AuthService.ensureAuthenticated();
+      
       const tokenizeCard = functions().httpsCallable('tokenizeCardDirect');
       
       const result = await tokenizeCard({
-        user_id: auth().currentUser.uid,
+        user_id: auth().currentUser?.uid,
         provider: provider, // 'stripe' o 'mercadopago'
         card_number: cardData.number,
         card_exp_month: cardData.expMonth,
@@ -93,6 +140,9 @@ class PaymentService {
   // Procesar pago con token (nueva tarjeta o guardada)
   async processPayment(paymentData) {
     try {
+      // ⚠️ CRÍTICO: Verificar autenticación antes de llamar la function
+      await AuthService.ensureAuthenticated();
+      
       const processPayment = functions().httpsCallable('processPayment');
       
       // Configurar método de pago según el tipo
@@ -115,7 +165,7 @@ class PaymentService {
       
       const result = await processPayment({
         payment_id: `pay_${Date.now()}`,
-        user_id: auth().currentUser.uid,
+        user_id: auth().currentUser?.uid,
         professional_id: paymentData.professionalId,
         service_request_id: paymentData.serviceRequestId,
         provider: paymentData.provider,
@@ -253,18 +303,31 @@ import { View, Text, TextInput, TouchableOpacity, Alert } from 'react-native';
 const SavedCardPayment = ({ savedCard, onPayment, loading }) => {
   const [cvc, setCvc] = useState('');
 
+  // Verificar si la tarjeta requiere CVC según el proveedor
+  const requiresCvc = () => {
+    if (savedCard.provider === 'stripe') {
+      return true; // Stripe siempre requiere CVC
+    }
+    if (savedCard.provider === 'mercadopago') {
+      return savedCard.requires_cvc || false; // Campo específico de MercadoPago
+    }
+    return false; // Transbank no requiere CVC para tarjetas guardadas
+  };
+
   const handlePayWithSavedCard = () => {
-    if (!cvc) {
+    // Validar CVC solo si es requerido
+    if (requiresCvc() && !cvc) {
       Alert.alert('Error', 'Ingresa el código CVC de tu tarjeta');
       return;
     }
 
-    // Procesar pago con tarjeta guardada + CVC
+    // Procesar pago con tarjeta guardada
     onPayment({
       type: 'saved_card',
       card_token: savedCard.card_token,
-      cvc: cvc,
-      provider: savedCard.provider
+      cvc: requiresCvc() ? cvc : null,
+      provider: savedCard.provider,
+      requires_cvc: requiresCvc()
     });
   };
 
@@ -277,23 +340,35 @@ const SavedCardPayment = ({ savedCard, onPayment, loading }) => {
         <Text style={styles.cardHolder}>{savedCard.card_holder_name}</Text>
       </View>
       
-      <View style={styles.cvcSection}>
-        <Text style={styles.cvcLabel}>Por seguridad, ingresa tu código CVC:</Text>
-        <TextInput
-          style={styles.cvcInput}
-          placeholder="CVC"
-          value={cvc}
-          onChangeText={setCvc}
-          keyboardType="numeric"
-          maxLength={4}
-          secureTextEntry
-        />
-      </View>
+      {/* Mostrar CVC solo si es requerido */}
+      {requiresCvc() && (
+        <View style={styles.cvcSection}>
+          <Text style={styles.cvcLabel}>
+            Por seguridad, ingresa tu código CVC:
+          </Text>
+          <TextInput
+            style={styles.cvcInput}
+            placeholder="CVC"
+            value={cvc}
+            onChangeText={setCvc}
+            keyboardType="numeric"
+            maxLength={4}
+            secureTextEntry
+          />
+        </View>
+      )}
+      
+      {/* Mensaje informativo si no requiere CVC */}
+      {!requiresCvc() && (
+        <Text style={styles.noCvcMessage}>
+          Esta tarjeta no requiere código CVC para pagos.
+        </Text>
+      )}
       
       <TouchableOpacity
         style={styles.payButton}
         onPress={handlePayWithSavedCard}
-        disabled={loading || !cvc}
+        disabled={loading || (requiresCvc() && !cvc)}
       >
         <Text style={styles.payButtonText}>
           {loading ? 'Procesando...' : 'Pagar con esta tarjeta'}
@@ -308,15 +383,17 @@ const SavedCardPayment = ({ savedCard, onPayment, loading }) => {
 
 ```javascript
 // services/CardService.js
-import { firestore } from '../firebase';
-import auth from '@react-native-firebase/auth';
+import { firestore, auth } from '../firebase';
+import AuthService from './AuthService';
 
 class CardService {
   
   // Obtener tarjetas del usuario
   async getUserCards() {
     try {
-      const userId = auth().currentUser.uid;
+      // ⚠️ CRÍTICO: Verificar autenticación antes de acceder a Firestore
+      const user = await AuthService.ensureAuthenticated();
+      const userId = user.uid;
       const cardsSnapshot = await firestore()
         .collection('payment_cards')
         .where('user_id', '==', userId)
@@ -324,10 +401,17 @@ class CardService {
         .orderBy('created_at', 'desc')
         .get();
 
-      return cardsSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
+      return cardsSnapshot.docs.map(doc => {
+        const cardData = doc.data();
+        return {
+          id: doc.id,
+          ...cardData,
+          // Asegurar que el campo requires_cvc esté presente para MercadoPago
+          requires_cvc: cardData.provider === 'mercadopago' ? 
+            (cardData.requires_cvc || false) : 
+            cardData.provider === 'stripe' // Stripe siempre requiere CVC
+        };
+      });
     } catch (error) {
       console.error('Error fetching cards:', error);
       throw error;
@@ -531,7 +615,47 @@ const CardForm = ({ onSubmit, loading }) => {
 };
 ```
 
-## 🔄 Flujo Completo de Integración
+## � Estructura de Datos de Tarjetas Guardadas
+
+### **Ejemplo de Tarjeta Guardada (Firestore)**
+```javascript
+// Documento en collection 'payment_cards'
+{
+  "card_id": "card_abc123",
+  "user_id": "user_xyz789", 
+  "provider": "mercadopago", // o "stripe", "transbank"
+  "card_token": "tok_mp_1234567890",
+  "card_holder_name": "Juan Pérez",
+  "card_last_four": "4242",
+  "card_brand": "visa", 
+  "card_type": "credit",
+  "expiration_month": "12",
+  "expiration_year": "25",
+  "alias": "Mi Visa Principal",
+  "is_default": true,
+  "requires_cvc": true, // ⚠️ IMPORTANTE: Campo específico para MercadoPago
+  "created_at": "2025-10-24T10:00:00Z"
+}
+```
+
+### **Lógica de CVC por Proveedor**
+```javascript
+// Reglas para solicitar CVC
+const shouldRequestCvc = (savedCard) => {
+  switch (savedCard.provider) {
+    case 'stripe':
+      return true; // Stripe SIEMPRE requiere CVC
+    case 'mercadopago': 
+      return savedCard.requires_cvc || false; // Campo configurable
+    case 'transbank':
+      return false; // Transbank no usa CVC para tarjetas guardadas
+    default:
+      return true; // Por seguridad, solicitar por defecto
+  }
+};
+```
+
+## �🔄 Flujo Completo de Integración
 
 ### **Ejemplo de Uso Principal**
 
@@ -663,6 +787,235 @@ const PaymentScreen = ({ route }) => {
 };
 ```
 
+## 🚨 Troubleshooting: Error "Unauthenticated"
+
+### **Problema Común**: `Error: Unauthenticated` al llamar Cloud Functions
+
+Este es uno de los errores más comunes al integrar Firebase Functions con React Native. Aquí las soluciones:
+
+#### **Solución 1: Verificación de Estado de Autenticación**
+```javascript
+// utils/FunctionCaller.js
+import auth from '@react-native-firebase/auth';
+import { functions } from '../firebase';
+
+export const callSecureFunction = async (functionName, data) => {
+  try {
+    // 1. Verificar que el usuario esté logueado
+    const currentUser = auth().currentUser;
+    if (!currentUser) {
+      throw new Error('Usuario no autenticado');
+    }
+    
+    // 2. Verificar que el token sea válido
+    const token = await currentUser.getIdToken(true); // Force refresh
+    console.log('Token obtenido:', token ? 'OK' : 'FAIL');
+    
+    // 3. Llamar la function
+    const callable = functions().httpsCallable(functionName);
+    const result = await callable(data);
+    
+    return result;
+  } catch (error) {
+    console.error(`Error calling ${functionName}:`, error);
+    throw error;
+  }
+};
+```
+
+#### **Solución 2: Usar onAuthStateChanged para Asegurar Estado**
+```javascript
+// hooks/useAuthenticatedUser.js
+import { useState, useEffect } from 'react';
+import auth from '@react-native-firebase/auth';
+
+export const useAuthenticatedUser = () => {
+  const [user, setUser] = useState(null);
+  const [isReady, setIsReady] = useState(false);
+  
+  useEffect(() => {
+    const unsubscribe = auth().onAuthStateChanged((authUser) => {
+      setUser(authUser);
+      setIsReady(true);
+    });
+    
+    return unsubscribe;
+  }, []);
+  
+  return { user, isReady, isAuthenticated: !!user };
+};
+
+// Uso en componente
+const PaymentScreen = () => {
+  const { user, isReady, isAuthenticated } = useAuthenticatedUser();
+  
+  const handlePayment = async () => {
+    if (!isAuthenticated) {
+      Alert.alert('Error', 'Debes iniciar sesión para realizar pagos');
+      return;
+    }
+    
+    // Proceder con el pago...
+  };
+  
+  if (!isReady) {
+    return <LoadingScreen />;
+  }
+  
+  if (!isAuthenticated) {
+    return <LoginScreen />;
+  }
+  
+  return <PaymentForm />;
+};
+```
+
+#### **Solución 3: Debugging de Token**
+```javascript
+// utils/debugAuth.js
+import auth from '@react-native-firebase/auth';
+
+export const debugAuthState = async () => {
+  const user = auth().currentUser;
+  
+  console.log('=== DEBUG AUTH STATE ===');
+  console.log('User exists:', !!user);
+  
+  if (user) {
+    console.log('User ID:', user.uid);
+    console.log('Email:', user.email);
+    console.log('Email verified:', user.emailVerified);
+    
+    try {
+      const token = await user.getIdToken();
+      console.log('Token length:', token.length);
+      console.log('Token starts with:', token.substring(0, 20));
+      
+      const tokenResult = await user.getIdTokenResult();
+      console.log('Token claims:', tokenResult.claims);
+      console.log('Token expiration:', new Date(tokenResult.expirationTime));
+    } catch (error) {
+      console.error('Error getting token:', error);
+    }
+  }
+  console.log('========================');
+};
+
+// Llamar antes de hacer pagos para debug
+await debugAuthState();
+```
+
+#### **Solución 4: Reiniciar Sesión si es Necesario**
+```javascript
+// services/AuthFixService.js
+import auth from '@react-native-firebase/auth';
+
+export const refreshUserSession = async () => {
+  try {
+    const user = auth().currentUser;
+    if (!user) {
+      throw new Error('No user logged in');
+    }
+    
+    // Force refresh del token
+    await user.getIdToken(true);
+    
+    // Reload user data
+    await user.reload();
+    
+    console.log('Session refreshed successfully');
+    return true;
+  } catch (error) {
+    console.error('Error refreshing session:', error);
+    
+    // Si falla, cerrar sesión y pedir login nuevamente
+    await auth().signOut();
+    throw new Error('Sesión expirada. Inicia sesión nuevamente.');
+  }
+};
+```
+
+#### **Solución 5: Wrapper de PaymentService con Retry**
+```javascript
+// services/SecurePaymentService.js
+import PaymentService from './PaymentService';
+import { refreshUserSession } from './AuthFixService';
+
+export const securePayment = async (paymentFunction, ...args) => {
+  try {
+    // Primer intento
+    return await paymentFunction(...args);
+  } catch (error) {
+    if (error.message.includes('Unauthenticated')) {
+      console.log('Auth error detected, attempting to refresh session...');
+      
+      try {
+        // Refrescar sesión y reintentar
+        await refreshUserSession();
+        return await paymentFunction(...args);
+      } catch (retryError) {
+        console.error('Retry failed:', retryError);
+        throw new Error('Error de autenticación. Inicia sesión nuevamente.');
+      }
+    }
+    
+    throw error; // Re-throw si no es error de auth
+  }
+};
+
+// Uso
+const result = await securePayment(
+  PaymentService.processPayment.bind(PaymentService),
+  paymentData
+);
+```
+
+## ⚠️ Consideraciones Importantes sobre CVC
+
+### **Manejo de CVC por Proveedor**
+
+#### **Stripe** 
+- ✅ **SIEMPRE requiere CVC** para pagos con tarjetas guardadas
+- ✅ Mayor seguridad, cumple estándares PCI DSS
+- ❌ UX menos fluida por reingreso constante
+
+#### **MercadoPago**
+- ⚙️ **CVC configurable** mediante campo `requires_cvc`
+- ✅ Flexibilidad según configuración de cuenta
+- ⚠️ Verificar configuración en dashboard de MercadoPago
+
+#### **Transbank**
+- ❌ **No requiere CVC** para tarjetas guardadas  
+- ✅ UX más fluida para usuarios recurrentes
+- ⚠️ Menor nivel de validación adicional
+
+### **Implementación Recomendada**
+```javascript
+// Componente inteligente que maneja CVC condicional
+const SmartPaymentButton = ({ savedCard, amount }) => {
+  const [showCvcInput, setShowCvcInput] = useState(false);
+  
+  useEffect(() => {
+    // Determinar si mostrar CVC basado en proveedor y configuración
+    const needsCvc = (
+      savedCard.provider === 'stripe' || 
+      (savedCard.provider === 'mercadopago' && savedCard.requires_cvc)
+    );
+    setShowCvcInput(needsCvc);
+  }, [savedCard]);
+
+  return (
+    <View>
+      {showCvcInput ? (
+        <SavedCardPayment savedCard={savedCard} onPayment={handlePayment} />
+      ) : (
+        <QuickPayButton savedCard={savedCard} onPayment={handleQuickPayment} />
+      )}
+    </View>
+  );
+};
+```
+
 ## 🔐 Seguridad y Mejores Prácticas
 
 ### **1. Validaciones Client-Side**
@@ -766,23 +1119,137 @@ describe('PaymentService', () => {
 });
 ```
 
+## 🔧 Soluciones Avanzadas de Autenticación
+
+### **Patrón de Retry con Exponential Backoff**
+```javascript
+// utils/RetryHelper.js
+export const withRetry = async (fn, maxRetries = 3, baseDelay = 1000) => {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (error.code === 'UNAUTHENTICATED' && attempt < maxRetries) {
+        const delay = baseDelay * Math.pow(2, attempt - 1);
+        console.log(`Auth retry ${attempt}/${maxRetries} in ${delay}ms`);
+        
+        // Intentar refresh del token
+        try {
+          const user = auth().currentUser;
+          if (user) {
+            await user.getIdToken(true);
+          }
+        } catch (refreshError) {
+          console.error('Token refresh failed:', refreshError);
+        }
+        
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+      throw error;
+    }
+  }
+};
+```
+
+### **Interceptor para Functions**
+```javascript
+// utils/FunctionsInterceptor.js
+import { functions } from '../firebase';
+import AuthService from '../services/AuthService';
+
+class FunctionsInterceptor {
+  static async callWithAuth(functionName, data) {
+    try {
+      // Verificar auth antes de llamar
+      await AuthService.ensureAuthenticated();
+      
+      const callable = functions().httpsCallable(functionName);
+      return await callable(data);
+    } catch (error) {
+      if (error.code === 'unauthenticated') {
+        // Intentar una vez más con token refresh
+        console.log('Retrying with fresh token...');
+        await AuthService.refreshToken();
+        const callable = functions().httpsCallable(functionName);
+        return await callable(data);
+      }
+      throw error;
+    }
+  }
+}
+
+export default FunctionsInterceptor;
+```
+
+### **Debug Helper para Autenticación**
+```javascript
+// utils/AuthDebugger.js
+import auth from '@react-native-firebase/auth';
+
+export const debugAuth = async () => {
+  const user = auth().currentUser;
+  
+  const debugInfo = {
+    isLoggedIn: !!user,
+    userId: user?.uid || null,
+    email: user?.email || null,
+    emailVerified: user?.emailVerified || false,
+    tokenValid: null,
+    lastSignIn: user?.metadata?.lastSignInTime || null,
+    creationTime: user?.metadata?.creationTime || null
+  };
+  
+  if (user) {
+    try {
+      const token = await user.getIdToken();
+      debugInfo.tokenValid = !!token;
+      debugInfo.tokenLength = token?.length || 0;
+    } catch (error) {
+      debugInfo.tokenValid = false;
+      debugInfo.tokenError = error.message;
+    }
+  }
+  
+  console.log('🔍 Auth Debug Info:', debugInfo);
+  return debugInfo;
+};
+```
+
 ---
 
 ## 📋 Checklist de Implementación
 
+### **Configuración Inicial**
 - [ ] Configurar Firebase Functions en React Native
+- [ ] Implementar AuthService para manejo de autenticación
+- [ ] Configurar interceptores para Functions calls
+
+### **Servicios de Pago**
 - [ ] Implementar PaymentService para llamadas a Cloud Functions
+- [ ] Implementar manejo de retry con exponential backoff
+- [ ] Configurar debug helpers para troubleshooting
+
+### **Componentes UI**
 - [ ] Crear componentes de UI (CardForm, PaymentProviderSelector)
+- [ ] Implementar componente para tarjetas guardadas con CVC
+- [ ] Añadir validaciones client-side
+
+### **Flujos de Pago**
 - [ ] Implementar flujo de tokenización directa (Stripe/MercadoPago)
 - [ ] Implementar flujo de redirección (Solo Transbank)
-- [ ] Implementar componente para tarjetas guardadas con CVC
 - [ ] Configurar manejo de pagos con tarjetas guardadas
 - [ ] Configurar manejo directo de Firestore para tarjetas
-- [ ] Añadir validaciones client-side
+
+### **Testing y Monitoreo**
 - [ ] Implementar manejo de errores robusto
 - [ ] Configurar analytics y tracking
 - [ ] Escribir tests unitarios
 - [ ] Probar en dispositivos reales
+
+### **Producción**
 - [ ] Configurar webhooks en proveedores de pago
+- [ ] Verificar autenticación en entorno de producción
+- [ ] Implementar logging y monitoreo de errores
 
 Este prompt te da una base completa para integrar el payment gateway en tu app React Native. ¿Hay algún aspecto específico que quieras que profundice más?

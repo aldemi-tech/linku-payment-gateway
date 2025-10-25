@@ -181,6 +181,8 @@ export const tokenizeCardDirect = functions.https.onCall(
 export const createTokenizationSession = functions.https.onCall(
   async (data: RedirectTokenizationRequest, context): Promise<ApiResponse> => {
     try {
+      console.log("Create tokenization session request", data, context.rawRequest.headers);
+      
       // Verify authentication
       if (!context.auth) {
         throw new PaymentGatewayError("Unauthenticated", "UNAUTHENTICATED", 401);
