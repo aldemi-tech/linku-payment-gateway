@@ -8,6 +8,7 @@ import { IPaymentProvider } from "./base";
 import { StripeProvider } from "./stripe";
 import { TransbankProvider } from "./transbank";
 import { MercadoPagoProvider } from "./mercadopago";
+import { hasDefaultTestCredentials } from "../config/test-credentials";
 
 export class PaymentProviderFactory {
   private static providers: Map<PaymentProvider, IPaymentProvider> = new Map();
@@ -21,6 +22,7 @@ export class PaymentProviderFactory {
       count: configs.length,
     });
 
+    // Initialize providers with provided configs
     configs.forEach((config) => {
       try {
         if (!config.enabled) {
@@ -37,6 +39,37 @@ export class PaymentProviderFactory {
         console.log(`Provider ${config.provider} initialized successfully`);
       } catch (error: any) {
         console.error(`Failed to initialize provider ${config.provider}:`, error);
+      }
+    });
+
+    // Try to initialize providers without configs using test credentials
+    const allProviders: PaymentProvider[] = ["stripe", "transbank", "mercadopago"];
+    const configuredProviders = configs.map(c => c.provider);
+    
+    allProviders.forEach((providerName) => {
+      if (!configuredProviders.includes(providerName)) {
+        try {
+          if (hasDefaultTestCredentials(providerName)) {
+            console.log(`Attempting to initialize ${providerName} with default test credentials`);
+            const provider = this.createProvider(providerName);
+            provider.initialize({}); // Empty config, will use test credentials
+            
+            this.providers.set(providerName, provider);
+            // Create a default config entry
+            const defaultConfig: PaymentProviderConfig = {
+              provider: providerName,
+              method: providerName === "transbank" ? "redirect" : "direct",
+              enabled: true,
+            };
+            this.configs.set(providerName, defaultConfig);
+            
+            console.log(`Provider ${providerName} initialized with test credentials`);
+          } else {
+            console.log(`Provider ${providerName} requires user credentials, skipping default initialization`);
+          }
+        } catch (error: any) {
+          console.log(`Could not initialize ${providerName} with test credentials:`, error.message);
+        }
       }
     });
   }

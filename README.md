@@ -130,6 +130,21 @@ TRANSBANK_SECRET_KEY=your_secret_key
 TRANSBANK_API_URL=https://webpay3gint.transbank.cl
 ```
 
+### 🚀 **NUEVO: Credenciales de Prueba Automáticas**
+
+¡Ahora puedes empezar a desarrollar sin configurar nada! 
+
+- ✅ **Transbank**: Se inicializa automáticamente con credenciales de prueba públicas
+- ⚠️ **Stripe**: Requiere tus propias claves de prueba (desde tu dashboard de Stripe)
+- ⚠️ **MercadoPago**: Requiere crear una aplicación de prueba en tu cuenta
+
+**Verificar providers disponibles:**
+```bash
+curl https://tu-proyecto.cloudfunctions.net/getAvailableProviders
+```
+
+📖 **Ver documentación completa**: [TEST_CREDENTIALS.md](./docs/TEST_CREDENTIALS.md)
+
 ## 🔧 Desarrollo
 
 ### Compilar TypeScript

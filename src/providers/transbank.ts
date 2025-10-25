@@ -22,6 +22,7 @@ import {
 // Import Transbank SDK - Using require due to SDK compatibility
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { OneClick, IntegrationCommerceCodes, IntegrationApiKeys } = require("transbank-sdk");
+import { TRANSBANK_TEST_CONFIG } from "../config/test-credentials";
 
 export class TransbankProvider {
   name: PaymentProvider = "transbank";
@@ -30,12 +31,25 @@ export class TransbankProvider {
   private environment: string = "integration"; // "integration" or "production"
 
   initialize(config: Record<string, any>): void {
-    this.commerceCode = config.commerceCode || IntegrationCommerceCodes.ONECLICK_MALL;
-    this.apiKey = config.apiKey || IntegrationApiKeys.WEBPAY;
-    this.environment = config.environment || "integration";
+    // Use provided config or fall back to test credentials
+    if (config && Object.keys(config).length > 0) {
+      this.commerceCode = config.commerceCode;
+      this.apiKey = config.apiKey;
+      this.environment = config.environment || "integration";
+    } else {
+      // Use default test credentials when no config is provided
+      console.log("No Transbank configuration provided, using default test credentials");
+      this.commerceCode = TRANSBANK_TEST_CONFIG.commerceCode;
+      this.apiKey = TRANSBANK_TEST_CONFIG.apiKey;
+      this.environment = TRANSBANK_TEST_CONFIG.environment;
+    }
 
-    if (!this.commerceCode || !this.apiKey) {
-      throw new PaymentGatewayError("Transbank commerce code and API key are required", "MISSING_CONFIG");
+    // Fallback to SDK defaults if still empty
+    if (!this.commerceCode) {
+      this.commerceCode = IntegrationCommerceCodes.ONECLICK_MALL;
+    }
+    if (!this.apiKey) {
+      this.apiKey = IntegrationApiKeys.WEBPAY;
     }
 
     // Configure Transbank SDK

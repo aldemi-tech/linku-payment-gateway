@@ -26,11 +26,19 @@ export class StripeProvider {
   private webhookSecret: string = "";
 
   initialize(config: Record<string, any>): void {
-    const apiKey = config.secretKey;
-    this.webhookSecret = config.webhookSecret || "";
-
-    if (!apiKey) {
-      throw new PaymentGatewayError("Stripe API key is required", "MISSING_CONFIG");
+    let apiKey: string;
+    
+    if (config && config.secretKey) {
+      apiKey = config.secretKey;
+      this.webhookSecret = config.webhookSecret || "";
+    } else {
+      // Stripe requires actual API keys, cannot provide working defaults
+      // Log warning and throw error with helpful message
+      console.warn("No Stripe configuration provided. Stripe requires valid API keys from your Stripe dashboard.");
+      throw new PaymentGatewayError(
+        "Stripe API key is required. Please provide your Stripe test API key from your Stripe dashboard.",
+        "MISSING_CONFIG"
+      );
     }
 
     this.stripe = new Stripe(apiKey, {

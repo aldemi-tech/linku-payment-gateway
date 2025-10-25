@@ -30,11 +30,17 @@ export class MercadoPagoProvider {
   private environment: string = "sandbox"; // "sandbox" or "production"
 
   initialize(config: Record<string, any>): void {
-    this.accessToken = config.accessToken;
-    this.environment = config.environment || "sandbox";
-
-    if (!this.accessToken) {
-      throw new PaymentGatewayError("MercadoPago access token is required", "MISSING_CONFIG");
+    if (config && config.accessToken) {
+      this.accessToken = config.accessToken;
+      this.environment = config.environment || "sandbox";
+    } else {
+      // MercadoPago requires actual access tokens, cannot provide working defaults
+      // Log warning and throw error with helpful message
+      console.warn("No MercadoPago configuration provided. MercadoPago requires a valid access token from your MercadoPago developer account.");
+      throw new PaymentGatewayError(
+        "MercadoPago access token is required. Please create a test application in your MercadoPago developer account and provide the access token.",
+        "MISSING_CONFIG"
+      );
     }
 
     // Configure MercadoPago SDK

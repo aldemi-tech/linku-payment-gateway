@@ -81,7 +81,7 @@ const initializeProviders = () => {
     });
     console.log("Stripe provider configuration added");
   } else {
-    console.log("Stripe API key not found, skipping Stripe provider");
+    console.log("Stripe API key not found, will try to initialize with test credentials if available");
   }
 
   // Transbank configuration
@@ -103,7 +103,7 @@ const initializeProviders = () => {
     });
     console.log("Transbank provider configuration added");
   } else {
-    console.log("Transbank API key not found, skipping Transbank provider");
+    console.log("Transbank API key not found, will try to initialize with test credentials if available");
   }
 
   // MercadoPago configuration
@@ -123,15 +123,15 @@ const initializeProviders = () => {
     });
     console.log("MercadoPago provider configuration added");
   } else {
-    console.log(
-      "MercadoPago access token not found, skipping MercadoPago provider"
-    );
+    console.log("MercadoPago access token not found, will try to initialize with test credentials if available");
   }
 
+  // Initialize providers (this will now also try test credentials for missing providers)
   PaymentProviderFactory.initialize(configs);
   console.log("Payment gateway initialized with providers:", {
     providers: PaymentProviderFactory.getAvailableProviders(),
     totalConfigs: configs.length,
+    availableProviders: PaymentProviderFactory.getAvailableProviders().length,
   });
 };
 
@@ -820,3 +820,59 @@ export const webhook = functions.https.onRequest(async (req, res) => {
     });
   }
 });
+
+// ==================== UTILITY FUNCTIONS ====================
+
+/**
+ * Get available payment providers and their information
+ */
+export const getAvailableProviders = functions.https.onRequest(
+  async (req, res) => {
+    try {
+      // Validate request method
+      if (req.method !== 'GET') {
+        res.status(405).json({
+          success: false,
+          error: "Method not allowed",
+          message: "Only GET method is allowed",
+        });
+        return;
+      }
+
+      const availableProviders = PaymentProviderFactory.getAvailableProviders();
+      const providersInfo = availableProviders.map((provider) => {
+        const config = PaymentProviderFactory.getConfig(provider);
+        return {
+          provider,
+          method: config.method,
+          enabled: config.enabled,
+          isTestMode: !config.secretKey || !config.accessToken || !config.apiKey, // Rough indicator of test mode
+        };
+      });
+
+      const response: ApiResponse<{
+        providers: any[];
+        total: number;
+        timestamp: string;
+      }> = {
+        success: true,
+        data: {
+          providers: providersInfo,
+          total: availableProviders.length,
+          timestamp: new Date().toISOString(),
+        },
+      };
+
+      res.status(200).json(response);
+    } catch (error: any) {
+      const gatewayError = handleError(error);
+      console.error("Get providers error:", gatewayError);
+
+      res.status(gatewayError.statusCode || 500).json({
+        success: false,
+        error: gatewayError.code,
+        message: gatewayError.message,
+      });
+    }
+  }
+);
