@@ -32,17 +32,20 @@ const configs = [];
 if (stripeSecretKey) {
   configs.push({ provider: "stripe", ... });
 }
-// Si no había config, no se inicializaba el provider
+PaymentProviderFactory.initialize(configs);
+// Si no había config, el provider no estaba disponible
 ```
 
-### Ahora (Nuevo Comportamiento)
+### Ahora (Nuevo Comportamiento - Lazy Initialization)
 ```javascript
-// 1. Inicializa providers con configuración proporcionada
+// 1. Se almacenan las configuraciones disponibles
 const configs = [...];
-
-// 2. Intenta inicializar providers restantes con credenciales de prueba
 PaymentProviderFactory.initialize(configs);
-// El factory ahora intenta inicializar TODOS los providers disponibles
+// No se inicializa ningún provider aún
+
+// 2. Los providers se inicializan solo cuando se necesitan (lazy)
+const provider = PaymentProviderFactory.getProvider("transbank");
+// Aquí se inicializa Transbank con credenciales de prueba automáticamente
 ```
 
 ## Endpoint para Verificar Providers Disponibles
@@ -95,30 +98,51 @@ export MERCADOPAGO_ACCESS_TOKEN="TEST-..."
 
 Si no proporcionas configuración, el sistema:
 
-1. ✅ **Transbank**: Se inicializa automáticamente con credenciales de prueba públicas
-2. ⚠️ **Stripe**: Muestra mensaje informativo sobre cómo obtener claves de prueba
-3. ⚠️ **MercadoPago**: Muestra mensaje informativo sobre cómo crear aplicación de prueba
+## Flujo de Inicialización Actual (Lazy Loading)
+
+1. **Al iniciar**: 
+   - Lee configuración del entorno disponible
+   - Almacena solo las configuraciones de usuario (si las hay)
+   - **NO inicializa ningún provider**
+   - Output: `Payment gateway ready - X user config(s) loaded`
+
+2. **Cuando se solicita un provider por primera vez**: 
+   - Si ya está inicializado → lo retorna
+   - Si tiene configuración de usuario → la usa para inicializar
+   - Si tiene credenciales de prueba → las usa automáticamente
+   - Si no tiene nada → lanza error con mensaje útil
+
+3. **Beneficios**:
+   - ✅ **Startup ultra-rápido** (no se hace nada innecesario)
+   - ✅ **Logs limpios** (sin spam de providers no usados)
+   - ✅ **Mejor manejo de errores** (errores específicos por provider)
+   - ✅ **Menos memoria usada** (solo providers que realmente se usan)
+   - ✅ **Transbank disponible automáticamente** cuando se necesite
 
 ## Logs de Inicialización
 
-El sistema ahora proporciona logs más detallados:
+El sistema ahora es mucho más limpio y eficiente:
 
 ```bash
-# Configuración encontrada
-Stripe provider configuration added
-Transbank API key not found, will try to initialize with test credentials if available
+# Al iniciar la aplicación (sin configuraciones de usuario)
+Storing provider configurations { count: 0 }
+Provider configurations stored successfully
+Payment gateway ready - 0 user config(s) loaded
 
-# Inicialización automática  
-Attempting to initialize transbank with default test credentials
-Provider transbank initialized with test credentials
-Provider stripe requires user credentials, skipping default initialization
+# Al iniciar la aplicación (con configuración de Stripe)
+Stripe configuration loaded
+Storing provider configurations { count: 1 }
+Configuration stored for provider stripe
+Provider configurations stored successfully
+Payment gateway ready - 1 user config(s) loaded
 
-# Resultado final
-Payment gateway initialized with providers: {
-  providers: ['transbank', 'mercadopago'],
-  totalConfigs: 1,
-  availableProviders: 2
-}
+# Cuando se solicita Transbank por primera vez (lazy initialization)
+Initializing transbank with default test credentials
+No Transbank configuration provided, using default test credentials
+Provider transbank initialized successfully
+
+# Cuando se solicita un provider que requiere config y no la tiene
+Failed to initialize provider mercadopago: Provider 'mercadopago' requires configuration
 ```
 
 ## Ventajas

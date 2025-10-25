@@ -15,111 +15,166 @@ export class PaymentProviderFactory {
   private static configs: Map<PaymentProvider, PaymentProviderConfig> = new Map();
 
   /**
-   * Initialize all payment providers
+   * Store provider configurations (doesn't initialize providers yet)
    */
   static initialize(configs: PaymentProviderConfig[]): void {
-    console.log("Initializing payment providers", {
+    console.log("Storing provider configurations", {
       count: configs.length,
     });
 
-    // Initialize providers with provided configs
+    // Store user-provided configs
     configs.forEach((config) => {
-      try {
-        if (!config.enabled) {
-          console.log(`Provider ${config.provider} is disabled, skipping`);
-          return;
-        }
-
-        const provider = this.createProvider(config.provider);
-        provider.initialize(config);
-
-        this.providers.set(config.provider, provider);
+      if (config.enabled) {
         this.configs.set(config.provider, config);
-
-        console.log(`Provider ${config.provider} initialized successfully`);
-      } catch (error: any) {
-        console.error(`Failed to initialize provider ${config.provider}:`, error);
+        console.log(`Configuration stored for provider ${config.provider}`);
+      } else {
+        console.log(`Provider ${config.provider} is disabled`);
       }
     });
 
-    // Try to initialize providers without configs using test credentials
-    const allProviders: PaymentProvider[] = ["stripe", "transbank", "mercadopago"];
-    const configuredProviders = configs.map(c => c.provider);
-    
-    allProviders.forEach((providerName) => {
-      if (!configuredProviders.includes(providerName)) {
-        try {
-          if (hasDefaultTestCredentials(providerName)) {
-            console.log(`Attempting to initialize ${providerName} with default test credentials`);
-            const provider = this.createProvider(providerName);
-            provider.initialize({}); // Empty config, will use test credentials
-            
-            this.providers.set(providerName, provider);
-            // Create a default config entry
-            const defaultConfig: PaymentProviderConfig = {
-              provider: providerName,
-              method: providerName === "transbank" ? "redirect" : "direct",
-              enabled: true,
-            };
-            this.configs.set(providerName, defaultConfig);
-            
-            console.log(`Provider ${providerName} initialized with test credentials`);
-          } else {
-            console.log(`Provider ${providerName} requires user credentials, skipping default initialization`);
-          }
-        } catch (error: any) {
-          console.log(`Could not initialize ${providerName} with test credentials:`, error.message);
-        }
-      }
-    });
+    console.log("Provider configurations stored successfully");
   }
 
   /**
-   * Get a payment provider instance
+   * Get a payment provider instance (lazy initialization)
    */
   static getProvider(providerName: PaymentProvider): IPaymentProvider {
-    const provider = this.providers.get(providerName);
+    // Check if provider is already initialized
+    const existingProvider = this.providers.get(providerName);
+    if (existingProvider) {
+      return existingProvider;
+    }
 
-    if (!provider) {
+    // Try to initialize the provider on-demand
+    try {
+      const provider = this.createProvider(providerName);
+      
+      // Get user configuration if available
+      const userConfig = this.configs.get(providerName);
+      
+      if (userConfig) {
+        // Use user-provided configuration
+        console.log(`Initializing ${providerName} with user configuration`);
+        provider.initialize(userConfig);
+      } else if (hasDefaultTestCredentials(providerName)) {
+        // Use default test credentials
+        console.log(`Initializing ${providerName} with default test credentials`);
+        provider.initialize({}); // Empty config, will use test credentials
+        
+        // Create a default config entry
+        const defaultConfig: PaymentProviderConfig = {
+          provider: providerName,
+          method: providerName === "transbank" ? "redirect" : "direct",
+          enabled: true,
+        };
+        this.configs.set(providerName, defaultConfig);
+      } else {
+        // Provider requires user configuration
+        throw new PaymentGatewayError(
+          `Provider '${providerName}' requires configuration. Please provide API keys or credentials.`,
+          "MISSING_CONFIG",
+          400
+        );
+      }
+
+      // Store the initialized provider
+      this.providers.set(providerName, provider);
+      console.log(`Provider ${providerName} initialized successfully`);
+      
+      return provider;
+    } catch (error: any) {
+      console.error(`Failed to initialize provider ${providerName}:`, error);
       throw new PaymentGatewayError(
-        `Payment provider '${providerName}' is not available`,
+        `Payment provider '${providerName}' is not available: ${error.message}`,
         "PROVIDER_NOT_FOUND",
         400
       );
     }
-
-    return provider;
   }
 
   /**
    * Get provider configuration
    */
   static getConfig(providerName: PaymentProvider): PaymentProviderConfig {
-    const config = this.configs.get(providerName);
+    // Try to get existing config
+    let config = this.configs.get(providerName);
 
     if (!config) {
-      throw new PaymentGatewayError(
-        `Configuration for provider '${providerName}' not found`,
-        "CONFIG_NOT_FOUND",
-        500
-      );
+      // If no config exists but provider has default test credentials, create default config
+      if (hasDefaultTestCredentials(providerName)) {
+        config = {
+          provider: providerName,
+          method: providerName === "transbank" ? "redirect" : "direct",
+          enabled: true,
+        };
+        // Don't store it yet, just return it
+      } else {
+        throw new PaymentGatewayError(
+          `Configuration for provider '${providerName}' not found`,
+          "CONFIG_NOT_FOUND",
+          500
+        );
+      }
     }
 
     return config;
   }
 
   /**
-   * Check if provider is available
+   * Check if provider is available (without initializing it)
    */
   static isProviderAvailable(providerName: PaymentProvider): boolean {
-    return this.providers.has(providerName);
+    // If already initialized, it's available
+    if (this.providers.has(providerName)) {
+      return true;
+    }
+
+    // If has user config, it's available
+    if (this.configs.has(providerName)) {
+      return true;
+    }
+
+    // If has default test credentials, it's available
+    if (hasDefaultTestCredentials(providerName)) {
+      return true;
+    }
+
+    return false;
   }
 
   /**
-   * Get all available providers
+   * Get all available providers (includes both initialized and potentially available)
    */
   static getAvailableProviders(): PaymentProvider[] {
-    return Array.from(this.providers.keys());
+    const allProviders: PaymentProvider[] = ["stripe", "transbank", "mercadopago"];
+    const availableProviders: PaymentProvider[] = [];
+
+    // Check each provider to see if it can be initialized
+    allProviders.forEach((providerName) => {
+      try {
+        // If already initialized, it's available
+        if (this.providers.has(providerName)) {
+          availableProviders.push(providerName);
+          return;
+        }
+
+        // If has user config, it's available
+        if (this.configs.has(providerName)) {
+          availableProviders.push(providerName);
+          return;
+        }
+
+        // If has default test credentials, it's available
+        if (hasDefaultTestCredentials(providerName)) {
+          availableProviders.push(providerName);
+          return;
+        }
+      } catch (error) {
+        console.log(`Provider ${providerName} is not available:`, error);
+      }
+    });
+
+    return availableProviders;
   }
 
   /**

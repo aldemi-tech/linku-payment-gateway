@@ -60,11 +60,11 @@ const generateId = (prefix: string): string => {
 
 const createTimestamp = () => Timestamp.now();
 
-// Initialize providers on cold start
-const initializeProviders = () => {
+// Load provider configurations (lazy initialization will happen on-demand)
+const loadProviderConfigs = () => {
   const configs: PaymentProviderConfig[] = [];
 
-  // Stripe configuration
+  // Stripe configuration (if available)
   const stripeSecretKey =
     functions.config().stripe?.secret_key || process.env.STRIPE_SECRET_KEY;
   if (stripeSecretKey) {
@@ -79,12 +79,10 @@ const initializeProviders = () => {
         process.env.STRIPE_WEBHOOK_SECRET,
       enabled: true,
     });
-    console.log("Stripe provider configuration added");
-  } else {
-    console.log("Stripe API key not found, will try to initialize with test credentials if available");
+    console.log("Stripe configuration loaded");
   }
 
-  // Transbank configuration
+  // Transbank configuration (if available)
   const transbankApiKey =
     functions.config().transbank?.api_key || process.env.TRANSBANK_API_KEY;
   if (transbankApiKey) {
@@ -101,12 +99,10 @@ const initializeProviders = () => {
         "integration",
       enabled: true,
     });
-    console.log("Transbank provider configuration added");
-  } else {
-    console.log("Transbank API key not found, will try to initialize with test credentials if available");
+    console.log("Transbank configuration loaded");
   }
 
-  // MercadoPago configuration
+  // MercadoPago configuration (if available)
   const mercadoPagoAccessToken =
     functions.config().mercadopago?.access_token ||
     process.env.MERCADOPAGO_ACCESS_TOKEN;
@@ -121,22 +117,16 @@ const initializeProviders = () => {
         "sandbox",
       enabled: true,
     });
-    console.log("MercadoPago provider configuration added");
-  } else {
-    console.log("MercadoPago access token not found, will try to initialize with test credentials if available");
+    console.log("MercadoPago configuration loaded");
   }
 
-  // Initialize providers (this will now also try test credentials for missing providers)
+  // Store configurations for lazy initialization
   PaymentProviderFactory.initialize(configs);
-  console.log("Payment gateway initialized with providers:", {
-    providers: PaymentProviderFactory.getAvailableProviders(),
-    totalConfigs: configs.length,
-    availableProviders: PaymentProviderFactory.getAvailableProviders().length,
-  });
+  console.log(`Payment gateway ready - ${configs.length} user config(s) loaded`);
 };
 
-// Initialize on module load
-initializeProviders();
+// Load configurations on module load (providers will initialize on-demand)
+loadProviderConfigs();
 
 // ==================== TOKENIZATION FUNCTIONS ====================
 
