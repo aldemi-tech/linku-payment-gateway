@@ -28,7 +28,7 @@ const db = admin.firestore();
 
 // Utility functions
 const validateRequiredFields = (data: any, fields: string[]) => {
-  const missing = fields.filter(field => !data[field]);
+  const missing = fields.filter((field) => !data[field]);
   if (missing.length > 0) {
     throw new PaymentGatewayError(
       `Missing required fields: ${missing.join(", ")}`,
@@ -64,14 +64,18 @@ const initializeProviders = () => {
   const configs: PaymentProviderConfig[] = [];
 
   // Stripe configuration
-  const stripeSecretKey = functions.config().stripe?.secret_key || process.env.STRIPE_SECRET_KEY;
+  const stripeSecretKey =
+    functions.config().stripe?.secret_key || process.env.STRIPE_SECRET_KEY;
   if (stripeSecretKey) {
     configs.push({
       provider: "stripe",
       method: "direct",
-      publicKey: functions.config().stripe?.public_key || process.env.STRIPE_PUBLIC_KEY,
+      publicKey:
+        functions.config().stripe?.public_key || process.env.STRIPE_PUBLIC_KEY,
       secretKey: stripeSecretKey,
-      webhookSecret: functions.config().stripe?.webhook_secret || process.env.STRIPE_WEBHOOK_SECRET,
+      webhookSecret:
+        functions.config().stripe?.webhook_secret ||
+        process.env.STRIPE_WEBHOOK_SECRET,
       enabled: true,
     });
     console.log("Stripe provider configuration added");
@@ -80,14 +84,20 @@ const initializeProviders = () => {
   }
 
   // Transbank configuration
-  const transbankApiKey = functions.config().transbank?.api_key || process.env.TRANSBANK_API_KEY;
+  const transbankApiKey =
+    functions.config().transbank?.api_key || process.env.TRANSBANK_API_KEY;
   if (transbankApiKey) {
     configs.push({
       provider: "transbank",
       method: "redirect",
-      commerceCode: functions.config().transbank?.commerce_code || process.env.TRANSBANK_COMMERCE_CODE,
+      commerceCode:
+        functions.config().transbank?.commerce_code ||
+        process.env.TRANSBANK_COMMERCE_CODE,
       apiKey: transbankApiKey,
-      environment: functions.config().transbank?.environment || process.env.TRANSBANK_ENVIRONMENT || "integration",
+      environment:
+        functions.config().transbank?.environment ||
+        process.env.TRANSBANK_ENVIRONMENT ||
+        "integration",
       enabled: true,
     });
     console.log("Transbank provider configuration added");
@@ -96,30 +106,47 @@ const initializeProviders = () => {
   }
 
   // MercadoPago configuration
-  const mercadoPagoAccessToken = functions.config().mercadopago?.access_token || process.env.MERCADOPAGO_ACCESS_TOKEN;
+  const mercadoPagoAccessToken =
+    functions.config().mercadopago?.access_token ||
+    process.env.MERCADOPAGO_ACCESS_TOKEN;
   if (mercadoPagoAccessToken) {
     configs.push({
       provider: "mercadopago",
       method: "direct",
       accessToken: mercadoPagoAccessToken,
-      environment: functions.config().mercadopago?.environment || process.env.MERCADOPAGO_ENVIRONMENT || "sandbox",
+      environment:
+        functions.config().mercadopago?.environment ||
+        process.env.MERCADOPAGO_ENVIRONMENT ||
+        "sandbox",
       enabled: true,
     });
     console.log("MercadoPago provider configuration added");
   } else {
-    console.log("MercadoPago access token not found, skipping MercadoPago provider");
+    console.log(
+      "MercadoPago access token not found, skipping MercadoPago provider"
+    );
   }
 
   PaymentProviderFactory.initialize(configs);
   console.log("Payment gateway initialized with providers:", {
     providers: PaymentProviderFactory.getAvailableProviders(),
-    totalConfigs: configs.length
+    totalConfigs: configs.length,
   });
 };
 
 // Initialize on module load
 initializeProviders();
 
+export const testFunction = functions.https.onCall((data, context) => {
+  return {
+    success: true,
+    data,
+    context: {
+      uid: context.auth?.uid || null,
+      token: context.auth?.token || null,
+    },
+  };
+});
 // ==================== TOKENIZATION FUNCTIONS ====================
 
 /**
@@ -130,7 +157,11 @@ export const tokenizeCardDirect = functions.https.onCall(
     try {
       // Verify authentication
       if (!context.auth) {
-        throw new PaymentGatewayError("Unauthenticated", "UNAUTHENTICATED", 401);
+        throw new PaymentGatewayError(
+          "Unauthenticated",
+          "UNAUTHENTICATED",
+          401
+        );
       }
 
       // Validate user_id matches authenticated user
@@ -181,11 +212,19 @@ export const tokenizeCardDirect = functions.https.onCall(
 export const createTokenizationSession = functions.https.onCall(
   async (data: RedirectTokenizationRequest, context): Promise<ApiResponse> => {
     try {
-      console.log("Create tokenization session request", data, context.rawRequest.headers);
-      
+      console.log(
+        "Create tokenization session request",
+        data,
+        context.rawRequest.headers
+      );
+
       // Verify authentication
       if (!context.auth) {
-        throw new PaymentGatewayError("Unauthenticated", "UNAUTHENTICATED", 401);
+        throw new PaymentGatewayError(
+          "Unauthenticated",
+          "UNAUTHENTICATED",
+          401
+        );
       }
 
       // Validate user_id matches authenticated user
@@ -226,11 +265,18 @@ export const createTokenizationSession = functions.https.onCall(
  * Complete tokenization from redirect callback
  */
 export const completeTokenization = functions.https.onCall(
-  async (data: { session_id: string; callback_data: any; provider: PaymentProvider }, context): Promise<ApiResponse> => {
+  async (
+    data: { session_id: string; callback_data: any; provider: PaymentProvider },
+    context
+  ): Promise<ApiResponse> => {
     try {
       // Verify authentication
       if (!context.auth) {
-        throw new PaymentGatewayError("Unauthenticated", "UNAUTHENTICATED", 401);
+        throw new PaymentGatewayError(
+          "Unauthenticated",
+          "UNAUTHENTICATED",
+          401
+        );
       }
 
       validateRequiredFields(data, ["session_id", "provider"]);
@@ -241,8 +287,11 @@ export const completeTokenization = functions.https.onCall(
       });
 
       // Verify session belongs to authenticated user
-      const sessionDoc = await db.collection("tokenization_sessions").doc(data.session_id).get();
-      
+      const sessionDoc = await db
+        .collection("tokenization_sessions")
+        .doc(data.session_id)
+        .get();
+
       if (!sessionDoc.exists) {
         throw new PaymentGatewayError("Session not found", "NOT_FOUND", 404);
       }
@@ -253,7 +302,10 @@ export const completeTokenization = functions.https.onCall(
       }
 
       const provider = PaymentProviderFactory.getProvider(data.provider);
-      const result = await provider.completeTokenization(data.session_id, data.callback_data);
+      const result = await provider.completeTokenization(
+        data.session_id,
+        data.callback_data
+      );
 
       return {
         success: true,
@@ -283,7 +335,11 @@ export const processPayment = functions.https.onCall(
     try {
       // Verify authentication
       if (!context.auth) {
-        throw new PaymentGatewayError("Unauthenticated", "UNAUTHENTICATED", 401);
+        throw new PaymentGatewayError(
+          "Unauthenticated",
+          "UNAUTHENTICATED",
+          401
+        );
       }
 
       // Validate user_id matches authenticated user
@@ -331,11 +387,14 @@ export const processPayment = functions.https.onCall(
 
       // Get payment card
       let token: CardToken;
-      
+
       if (data.token_id) {
         // Find card by card_id or payment_token
-        let cardDoc = await db.collection("payment_cards").doc(data.token_id).get();
-        
+        let cardDoc = await db
+          .collection("payment_cards")
+          .doc(data.token_id)
+          .get();
+
         if (!cardDoc.exists) {
           // Try to find by payment_token
           const cardsSnapshot = await db
@@ -344,11 +403,15 @@ export const processPayment = functions.https.onCall(
             .where("user_id", "==", data.user_id)
             .limit(1)
             .get();
-          
+
           if (cardsSnapshot.empty) {
-            throw new PaymentGatewayError("Payment card not found", "NOT_FOUND", 404);
+            throw new PaymentGatewayError(
+              "Payment card not found",
+              "NOT_FOUND",
+              404
+            );
           }
-          
+
           cardDoc = cardsSnapshot.docs[0];
         }
 
@@ -392,16 +455,20 @@ export const processPayment = functions.https.onCall(
       };
     } catch (error: any) {
       const gatewayError = handleError(error);
-      
+
       // Update payment status to failed if it exists
       if (data.payment_id) {
-        await db.collection("payments").doc(data.payment_id).update({
-          status: "failed",
-          error_message: gatewayError.message,
-          updated_at: createTimestamp(),
-        }).catch(() => {
-          // Ignore errors updating non-existent payment
-        });
+        await db
+          .collection("payments")
+          .doc(data.payment_id)
+          .update({
+            status: "failed",
+            error_message: gatewayError.message,
+            updated_at: createTimestamp(),
+          })
+          .catch(() => {
+            // Ignore errors updating non-existent payment
+          });
       }
 
       return {
@@ -420,11 +487,18 @@ export const processPayment = functions.https.onCall(
  * Refund a payment
  */
 export const refundPayment = functions.https.onCall(
-  async (data: { payment_id: string; amount?: number }, context): Promise<ApiResponse> => {
+  async (
+    data: { payment_id: string; amount?: number },
+    context
+  ): Promise<ApiResponse> => {
     try {
       // Verify authentication
       if (!context.auth) {
-        throw new PaymentGatewayError("Unauthenticated", "UNAUTHENTICATED", 401);
+        throw new PaymentGatewayError(
+          "Unauthenticated",
+          "UNAUTHENTICATED",
+          401
+        );
       }
 
       validateRequiredFields(data, ["payment_id"]);
@@ -432,8 +506,11 @@ export const refundPayment = functions.https.onCall(
       console.log("Refunding payment", { payment_id: data.payment_id });
 
       // Get payment
-      const paymentDoc = await db.collection("payments").doc(data.payment_id).get();
-      
+      const paymentDoc = await db
+        .collection("payments")
+        .doc(data.payment_id)
+        .get();
+
       if (!paymentDoc.exists) {
         throw new PaymentGatewayError("Payment not found", "NOT_FOUND", 404);
       }
@@ -441,7 +518,10 @@ export const refundPayment = functions.https.onCall(
       const payment = paymentDoc.data() as PaymentRequest;
 
       // Verify user is authorized (either client or professional)
-      if (payment.user_id !== context.auth.uid && payment.professional_id !== context.auth.uid) {
+      if (
+        payment.user_id !== context.auth.uid &&
+        payment.professional_id !== context.auth.uid
+      ) {
         throw new PaymentGatewayError("Unauthorized", "UNAUTHORIZED", 403);
       }
 
@@ -487,22 +567,29 @@ export const webhook = functions.https.onRequest(async (req, res) => {
     const pathParts = req.path.split("/");
     const provider = pathParts.at(-1)?.toLowerCase();
 
-    if (!provider || !["stripe", "transbank", "mercadopago"].includes(provider)) {
+    if (
+      !provider ||
+      !["stripe", "transbank", "mercadopago"].includes(provider)
+    ) {
       res.status(400).json({
-        error: "Invalid provider. Use: /webhook/{stripe|transbank|mercadopago}"
+        error: "Invalid provider. Use: /webhook/{stripe|transbank|mercadopago}",
       });
       return;
     }
 
     // Check if provider is available
-    if (!PaymentProviderFactory.isProviderAvailable(provider as PaymentProvider)) {
+    if (
+      !PaymentProviderFactory.isProviderAvailable(provider as PaymentProvider)
+    ) {
       res.status(400).json({
-        error: `Provider '${provider}' is not configured or available`
+        error: `Provider '${provider}' is not configured or available`,
       });
       return;
     }
 
-    const paymentProvider = PaymentProviderFactory.getProvider(provider as PaymentProvider);
+    const paymentProvider = PaymentProviderFactory.getProvider(
+      provider as PaymentProvider
+    );
 
     // Handle Stripe signature verification
     if (provider === "stripe") {
@@ -519,22 +606,21 @@ export const webhook = functions.https.onRequest(async (req, res) => {
     await paymentProvider.handleWebhook(req.body);
 
     console.log(`${provider} webhook processed successfully`);
-    res.status(200).json({ 
-      received: true, 
+    res.status(200).json({
+      received: true,
       provider: provider,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
-
   } catch (error: any) {
     console.error(`Webhook processing error:`, {
       provider: req.path,
       error: error.message,
-      stack: error.stack
+      stack: error.stack,
     });
-    
+
     res.status(500).json({
       error: "Webhook processing failed",
-      message: error.message
+      message: error.message,
     });
   }
 });
