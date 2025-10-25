@@ -18,6 +18,7 @@ import {
 } from "./types";
 import * as admin from "firebase-admin";
 import { Timestamp } from "firebase-admin/firestore";
+import { validateRequest } from "./utils";
 
 // Initialize Firebase Admin if not already initialized
 if (!admin.apps.length) {
@@ -53,7 +54,7 @@ const handleError = (error: any): PaymentGatewayError => {
 
 const generateId = (prefix: string): string => {
   const timestamp = Date.now().toString(36);
-  const random = Math.random().toString(36).substr(2, 9);
+  const random = Math.random().toString(36).substring(2, 11);
   return `${prefix}_${timestamp}_${random}`;
 };
 
@@ -137,47 +138,29 @@ const initializeProviders = () => {
 // Initialize on module load
 initializeProviders();
 
-export const testFunctionOnRequest = functions.https.onRequest(async (req, res) => {
-  res.json({
-    success: true,
-    data: req.body,
-    context: {
-      method: req.method,
-      headers: req.headers,
-    },
-  });
-});
-
-
-export const testFunction = functions.https.onCall((data, context) => {
-  return {
-    success: true,
-    data,
-    context: {
-      uid: context.auth?.uid || null,
-      token: context.auth?.token || null,
-    },
-  };
-});
 // ==================== TOKENIZATION FUNCTIONS ====================
 
 /**
  * Tokenize card directly (for providers like Stripe)
  */
-export const tokenizeCardDirect = functions.https.onCall(
-  async (data: DirectTokenizationRequest, context): Promise<ApiResponse> => {
+export const tokenizeCardDirect = functions.https.onRequest(
+  async (req, res) => {
     try {
-      // Verify authentication
-      if (!context.auth) {
-        throw new PaymentGatewayError(
-          "Unauthenticated",
-          "UNAUTHENTICATED",
-          401
-        );
+      // Validate request method
+      if (req.method !== 'POST') {
+        res.status(405).json({ 
+          success: false, 
+          error: { code: 'METHOD_NOT_ALLOWED', message: 'Only POST method is allowed' } 
+        });
+        return;
       }
 
+      // Validate authentication and user agent
+      const { user, metadata } = await validateRequest(req);
+      const data: DirectTokenizationRequest = req.body;
+
       // Validate user_id matches authenticated user
-      if (data.user_id !== context.auth.uid) {
+      if (data.user_id !== user.uid) {
         throw new PaymentGatewayError("Unauthorized", "UNAUTHORIZED", 403);
       }
 
@@ -195,18 +178,34 @@ export const tokenizeCardDirect = functions.https.onCall(
       console.log("Direct tokenization request", {
         user_id: data.user_id,
         provider: data.provider,
+        metadata: metadata,
       });
 
       const provider = PaymentProviderFactory.getProvider(data.provider);
       const result = await provider.tokenizeDirect(data);
 
-      return {
+      // Save tokenization session with metadata
+      if (result.token_id) {
+        await db.collection("tokenization_sessions").add({
+          user_id: data.user_id,
+          provider: data.provider,
+          token_id: result.token_id,
+          type: 'direct',
+          status: 'completed',
+          metadata: metadata,
+          created_at: createTimestamp(),
+        });
+      }
+
+      const response: ApiResponse = {
         success: true,
         data: result,
       };
+
+      res.status(200).json(response);
     } catch (error: any) {
       const gatewayError = handleError(error);
-      return {
+      const response: ApiResponse = {
         success: false,
         error: {
           code: gatewayError.code,
@@ -214,6 +213,7 @@ export const tokenizeCardDirect = functions.https.onCall(
           details: gatewayError.details,
         },
       };
+      res.status(gatewayError.statusCode || 500).json(response);
     }
   }
 );
@@ -221,26 +221,30 @@ export const tokenizeCardDirect = functions.https.onCall(
 /**
  * Create tokenization session with redirect (for providers like Transbank)
  */
-export const createTokenizationSession = functions.https.onCall(
-  async (data: RedirectTokenizationRequest, context): Promise<ApiResponse> => {
+export const createTokenizationSession = functions.https.onRequest(
+  async (req, res) => {
     try {
+      // Validate request method
+      if (req.method !== 'POST') {
+        res.status(405).json({ 
+          success: false, 
+          error: { code: 'METHOD_NOT_ALLOWED', message: 'Only POST method is allowed' } 
+        });
+        return;
+      }
+
+      // Validate authentication and user agent
+      const { user, metadata } = await validateRequest(req);
+      const data: RedirectTokenizationRequest = req.body;
+
       console.log(
         "Create tokenization session request",
         data,
-        context.rawRequest.headers
+        req.headers
       );
 
-      // Verify authentication
-      if (!context.auth) {
-        throw new PaymentGatewayError(
-          "Unauthenticated",
-          "UNAUTHENTICATED",
-          401
-        );
-      }
-
       // Validate user_id matches authenticated user
-      if (data.user_id !== context.auth.uid) {
+      if (data.user_id !== user.uid) {
         throw new PaymentGatewayError("Unauthorized", "UNAUTHORIZED", 403);
       }
 
@@ -250,18 +254,35 @@ export const createTokenizationSession = functions.https.onCall(
       console.log("Creating tokenization session", {
         user_id: data.user_id,
         provider: data.provider,
+        metadata: metadata,
       });
 
       const provider = PaymentProviderFactory.getProvider(data.provider);
       const result = await provider.createTokenizationSession(data);
 
-      return {
+      // Save tokenization session with metadata
+      if (result.session_id) {
+        await db.collection("tokenization_sessions").add({
+          user_id: data.user_id,
+          provider: data.provider,
+          session_id: result.session_id,
+          type: 'redirect',
+          status: 'pending',
+          return_url: data.return_url,
+          metadata: metadata,
+          created_at: createTimestamp(),
+        });
+      }
+
+      const response: ApiResponse = {
         success: true,
         data: result,
       };
+
+      res.status(200).json(response);
     } catch (error: any) {
       const gatewayError = handleError(error);
-      return {
+      const response: ApiResponse = {
         success: false,
         error: {
           code: gatewayError.code,
@@ -269,6 +290,7 @@ export const createTokenizationSession = functions.https.onCall(
           details: gatewayError.details,
         },
       };
+      res.status(gatewayError.statusCode || 500).json(response);
     }
   }
 );
@@ -276,40 +298,44 @@ export const createTokenizationSession = functions.https.onCall(
 /**
  * Complete tokenization from redirect callback
  */
-export const completeTokenization = functions.https.onCall(
-  async (
-    data: { session_id: string; callback_data: any; provider: PaymentProvider },
-    context
-  ): Promise<ApiResponse> => {
+export const completeTokenization = functions.https.onRequest(
+  async (req, res) => {
     try {
-      // Verify authentication
-      if (!context.auth) {
-        throw new PaymentGatewayError(
-          "Unauthenticated",
-          "UNAUTHENTICATED",
-          401
-        );
+      // Validate request method
+      if (req.method !== 'POST') {
+        res.status(405).json({ 
+          success: false, 
+          error: { code: 'METHOD_NOT_ALLOWED', message: 'Only POST method is allowed' } 
+        });
+        return;
       }
+
+      // Validate authentication and user agent
+      const { user, metadata } = await validateRequest(req);
+      const data: { session_id: string; callback_data: any; provider: PaymentProvider } = req.body;
 
       validateRequiredFields(data, ["session_id", "provider"]);
 
       console.log("Completing tokenization", {
         session_id: data.session_id,
         provider: data.provider,
+        metadata: metadata,
       });
 
       // Verify session belongs to authenticated user
-      const sessionDoc = await db
+      const sessionQuery = await db
         .collection("tokenization_sessions")
-        .doc(data.session_id)
+        .where("session_id", "==", data.session_id)
+        .limit(1)
         .get();
 
-      if (!sessionDoc.exists) {
+      if (sessionQuery.empty) {
         throw new PaymentGatewayError("Session not found", "NOT_FOUND", 404);
       }
 
+      const sessionDoc = sessionQuery.docs[0];
       const session = sessionDoc.data();
-      if (session?.user_id !== context.auth.uid) {
+      if (session?.user_id !== user.uid) {
         throw new PaymentGatewayError("Unauthorized", "UNAUTHORIZED", 403);
       }
 
@@ -319,13 +345,23 @@ export const completeTokenization = functions.https.onCall(
         data.callback_data
       );
 
-      return {
+      // Update session with completion metadata
+      await sessionDoc.ref.update({
+        status: 'completed',
+        completion_metadata: metadata,
+        completed_at: createTimestamp(),
+        token_id: result.token_id,
+      });
+
+      const response: ApiResponse = {
         success: true,
         data: result,
       };
+
+      res.status(200).json(response);
     } catch (error: any) {
       const gatewayError = handleError(error);
-      return {
+      const response: ApiResponse = {
         success: false,
         error: {
           code: gatewayError.code,
@@ -333,6 +369,7 @@ export const completeTokenization = functions.https.onCall(
           details: gatewayError.details,
         },
       };
+      res.status(gatewayError.statusCode || 500).json(response);
     }
   }
 );
@@ -342,20 +379,24 @@ export const completeTokenization = functions.https.onCall(
 /**
  * Process payment with tokenized card
  */
-export const processPayment = functions.https.onCall(
-  async (data: PaymentRequest, context): Promise<ApiResponse> => {
+export const processPayment = functions.https.onRequest(
+  async (req, res) => {
     try {
-      // Verify authentication
-      if (!context.auth) {
-        throw new PaymentGatewayError(
-          "Unauthenticated",
-          "UNAUTHENTICATED",
-          401
-        );
+      // Validate request method
+      if (req.method !== 'POST') {
+        res.status(405).json({ 
+          success: false, 
+          error: { code: 'METHOD_NOT_ALLOWED', message: 'Only POST method is allowed' } 
+        });
+        return;
       }
 
+      // Validate authentication and user agent
+      const { user, metadata } = await validateRequest(req);
+      const data: PaymentRequest = req.body;
+
       // Validate user_id matches authenticated user
-      if (data.user_id !== context.auth.uid) {
+      if (data.user_id !== user.uid) {
         throw new PaymentGatewayError("Unauthorized", "UNAUTHORIZED", 403);
       }
 
@@ -383,6 +424,7 @@ export const processPayment = functions.https.onCall(
         user_id: data.user_id,
         amount: data.amount,
         provider: data.provider,
+        metadata: metadata,
       });
 
       // Get or create payment record
@@ -391,6 +433,7 @@ export const processPayment = functions.https.onCall(
         ...data,
         payment_id: paymentId,
         status: "processing" as const,
+        metadata: metadata,
         created_at: createTimestamp(),
         updated_at: createTimestamp(),
       };
@@ -449,30 +492,83 @@ export const processPayment = functions.https.onCall(
           updated_at: paymentCard.updated_at,
         };
       } else {
-        // TODO: Handle session_id case (get token from completed session)
-        throw new PaymentGatewayError(
-          "Session-based payments not yet implemented",
-          "NOT_IMPLEMENTED",
-          501
-        );
+        // Handle session_id case (get token from completed session)
+        const sessionQuery = await db
+          .collection("tokenization_sessions")
+          .where("session_id", "==", data.session_id)
+          .where("status", "==", "completed")
+          .limit(1)
+          .get();
+
+        if (sessionQuery.empty) {
+          throw new PaymentGatewayError(
+            "Tokenization session not found or not completed",
+            "NOT_FOUND",
+            404
+          );
+        }
+
+        const session = sessionQuery.docs[0].data();
+        if (session.user_id !== data.user_id) {
+          throw new PaymentGatewayError("Unauthorized", "UNAUTHORIZED", 403);
+        }
+
+        if (!session.token_id) {
+          throw new PaymentGatewayError(
+            "No token available in session",
+            "INVALID_STATE",
+            400
+          );
+        }
+
+        // Get token from session
+        const cardDoc = await db
+          .collection("payment_cards")
+          .doc(session.token_id)
+          .get();
+
+        if (!cardDoc.exists) {
+          throw new PaymentGatewayError(
+            "Payment card not found",
+            "NOT_FOUND",
+            404
+          );
+        }
+
+        const paymentCard = cardDoc.data() as PaymentCard;
+        token = {
+          token_id: paymentCard.payment_token || paymentCard.card_id,
+          user_id: paymentCard.user_id,
+          provider: data.provider,
+          card_last4: paymentCard.card_last_four,
+          card_brand: paymentCard.card_brand,
+          card_exp_month: paymentCard.expiration_month,
+          card_exp_year: paymentCard.expiration_year,
+          card_holder_name: paymentCard.card_holder_name,
+          is_default: paymentCard.is_default,
+          created_at: paymentCard.created_at,
+          updated_at: paymentCard.updated_at,
+        };
       }
 
       // Process payment with provider
       const provider = PaymentProviderFactory.getProvider(data.provider);
       const result = await provider.processPayment(paymentData, token);
 
-      return {
+      const response: ApiResponse = {
         success: true,
         data: result,
       };
+
+      res.status(200).json(response);
     } catch (error: any) {
       const gatewayError = handleError(error);
 
       // Update payment status to failed if it exists
-      if (data.payment_id) {
+      if (req.body.payment_id) {
         await db
           .collection("payments")
-          .doc(data.payment_id)
+          .doc(req.body.payment_id)
           .update({
             status: "failed",
             error_message: gatewayError.message,
@@ -483,7 +579,7 @@ export const processPayment = functions.https.onCall(
           });
       }
 
-      return {
+      const response: ApiResponse = {
         success: false,
         error: {
           code: gatewayError.code,
@@ -491,6 +587,7 @@ export const processPayment = functions.https.onCall(
           details: gatewayError.details,
         },
       };
+      res.status(gatewayError.statusCode || 500).json(response);
     }
   }
 );
@@ -498,24 +595,28 @@ export const processPayment = functions.https.onCall(
 /**
  * Refund a payment
  */
-export const refundPayment = functions.https.onCall(
-  async (
-    data: { payment_id: string; amount?: number },
-    context
-  ): Promise<ApiResponse> => {
+export const refundPayment = functions.https.onRequest(
+  async (req, res) => {
     try {
-      // Verify authentication
-      if (!context.auth) {
-        throw new PaymentGatewayError(
-          "Unauthenticated",
-          "UNAUTHENTICATED",
-          401
-        );
+      // Validate request method
+      if (req.method !== 'POST') {
+        res.status(405).json({ 
+          success: false, 
+          error: { code: 'METHOD_NOT_ALLOWED', message: 'Only POST method is allowed' } 
+        });
+        return;
       }
+
+      // Validate authentication and user agent
+      const { user, metadata } = await validateRequest(req);
+      const data: { payment_id: string; amount?: number } = req.body;
 
       validateRequiredFields(data, ["payment_id"]);
 
-      console.log("Refunding payment", { payment_id: data.payment_id });
+      console.log("Refunding payment", { 
+        payment_id: data.payment_id,
+        metadata: metadata,
+      });
 
       // Get payment
       const paymentDoc = await db
@@ -531,8 +632,8 @@ export const refundPayment = functions.https.onCall(
 
       // Verify user is authorized (either client or professional)
       if (
-        payment.user_id !== context.auth.uid &&
-        payment.professional_id !== context.auth.uid
+        payment.user_id !== user.uid &&
+        payment.professional_id !== user.uid
       ) {
         throw new PaymentGatewayError("Unauthorized", "UNAUTHORIZED", 403);
       }
@@ -540,16 +641,25 @@ export const refundPayment = functions.https.onCall(
       const provider = PaymentProviderFactory.getProvider(payment.provider);
       await provider.refundPayment(data.payment_id, data.amount);
 
-      return {
+      // Update payment with refund metadata
+      await paymentDoc.ref.update({
+        refund_metadata: metadata,
+        refunded_at: createTimestamp(),
+        updated_at: createTimestamp(),
+      });
+
+      const response: ApiResponse = {
         success: true,
         data: {
           message: "Payment refunded successfully",
           payment_id: data.payment_id,
         },
       };
+
+      res.status(200).json(response);
     } catch (error: any) {
       const gatewayError = handleError(error);
-      return {
+      const response: ApiResponse = {
         success: false,
         error: {
           code: gatewayError.code,
@@ -557,6 +667,80 @@ export const refundPayment = functions.https.onCall(
           details: gatewayError.details,
         },
       };
+      res.status(gatewayError.statusCode || 500).json(response);
+    }
+  }
+);
+
+// ==================== UTILITY FUNCTIONS ====================
+
+/**
+ * Get execution location and environment info
+ */
+export const getExecutionLocation = functions.https.onRequest(
+  async (req, res) => {
+    try {
+      // Validate request method
+      if (req.method !== 'GET') {
+        res.status(405).json({ 
+          success: false, 
+          error: { code: 'METHOD_NOT_ALLOWED', message: 'Only GET method is allowed' } 
+        });
+        return;
+      }
+
+      // Validate authentication and user agent
+      const { user, metadata } = await validateRequest(req);
+
+      console.log("Getting execution location", {
+        user_id: user.uid,
+        metadata: metadata,
+      });
+
+      const locationInfo = {
+        // App Engine location headers
+        city: req.headers['x-appengine-city'] as string || null,
+        region: req.headers['x-appengine-region'] as string || null,
+        country: req.headers['x-appengine-country'] as string || null,
+        datacenter: req.headers['x-appengine-datacenter'] as string || null,
+        
+        // Additional location info
+        cloudflareCountry: req.headers['cf-ipcountry'] as string || null,
+        cloudTraceContext: req.headers['x-cloud-trace-context'] as string || null,
+        
+        // Network info
+        forwardedFor: req.headers['x-forwarded-for'] as string || null,
+        realIp: req.headers['x-real-ip'] as string || null,
+        clientIp: req.ip,
+        
+        // Server info
+        serverName: req.headers['server'] as string || null,
+        userAgent: req.headers['user-agent'] as string || null,
+        
+        // Formatted location
+        formattedLocation: metadata.executionLocation,
+        
+        // Timestamp
+        timestamp: new Date().toISOString(),
+      };
+
+      const response: ApiResponse = {
+        success: true,
+        data: locationInfo,
+      };
+
+      res.status(200).json(response);
+    } catch (error: any) {
+      const gatewayError = handleError(error);
+      const response: ApiResponse = {
+        success: false,
+        error: {
+          code: gatewayError.code,
+          message: gatewayError.message,
+          details: gatewayError.details,
+        },
+      };
+      res.status(gatewayError.statusCode || 500).json(response);
     }
   }
 );

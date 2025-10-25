@@ -2,7 +2,8 @@
 
 **Firebase Cloud Functions para integración completa de pagos**
 
-> Integración real con Stripe, Transbank y MercadoPago usando SDKs oficiales
+> Integración real con Stripe, Transbank y MercadoPago usando SDKs oficiales  
+> **✨ Ahora con autenticación Bearer Token y validación User-Agent**
 
 ---
 
@@ -27,13 +28,24 @@ cd linku-payment-gateway
 
 ## 🎯 Características
 
+### 🔐 **Seguridad Mejorada**
+- ✅ **Bearer Token Authentication** - Validación de tokens Firebase Auth
+- ✅ **User-Agent Validation** - Debe comenzar con "Linku"
+- ✅ **Request Metadata** - Tracking completo de headers y ubicación
+- ✅ **Execution Location Detection** - Detecta ubicación via headers x-appengine-*
+
 ### Proveedores Soportados
 - ✅ **Stripe** - Tokenización directa
 - ✅ **Transbank OneClick** - Tokenización con redirección web
-- 🔄 **MercadoPago** - Próximamente
+- ✅ **MercadoPago** - Tokenización directa con CVC opcional
+
+### Arquitectura
+- 🔄 **HTTP Request Functions** (no más onCall)
+- 📍 **Location Tracking** - Metadata en cada operación
+- 🛡️ **Enhanced Validation** - Bearer + User-Agent + Metadata
 
 ### Métodos de Tokenización
-1. **Tokenización Directa** (Stripe)
+1. **Tokenización Directa** (Stripe/MercadoPago)
    - Formulario en la app
    - Sin redirección
    - Inmediato
@@ -161,15 +173,38 @@ firebase deploy --only functions:processPayment
 
 ## 📚 API Reference
 
-### 1. Tokenización Directa (Stripe)
+> **🚨 IMPORTANTE:** Todas las funciones ahora son **HTTP Request** (no más httpsCallable)
 
-**Function:** `tokenizeCardDirect`
+### 🔐 **Autenticación Requerida**
 
-**Request:**
+Todas las requests deben incluir:
+
+```javascript
+headers: {
+  'Authorization': 'Bearer <firebase-id-token>',
+  'User-Agent': 'Linku/1.0.0 (iOS/Android)',
+  'Content-Type': 'application/json'
+}
+```
+
+### 1. Tokenización Directa (Stripe/MercadoPago)
+
+**Endpoint:** `POST /tokenizeCardDirect`
+
+**Headers:**
+```javascript
+{
+  'Authorization': 'Bearer <firebase-id-token>',
+  'User-Agent': 'Linku/1.0.0',
+  'Content-Type': 'application/json'
+}
+```
+
+**Request Body:**
 ```typescript
 {
   user_id: string;
-  provider: "stripe";
+  provider: "stripe" | "mercadopago";
   card_number: string;
   card_exp_month: number;
   card_exp_year: number;
@@ -196,21 +231,34 @@ firebase deploy --only functions:processPayment
 
 **Ejemplo desde la App:**
 ```typescript
-const functions = getFunctions();
-const tokenizeCard = httpsCallable(functions, 'tokenizeCardDirect');
+import auth from '@react-native-firebase/auth';
 
-const result = await tokenizeCard({
-  user_id: currentUser.uid,
-  provider: 'stripe',
-  card_number: '4242424242424242',
-  card_exp_month: 12,
-  card_exp_year: 2025,
-  card_cvv: '123',
-  card_holder_name: 'Juan Pérez',
-  set_as_default: true,
-});
-
-console.log(result.data); // { success: true, data: { token_id: '...' } }
+const tokenizeCard = async (cardData) => {
+  const user = auth().currentUser;
+  const idToken = await user.getIdToken();
+  
+  const response = await fetch('https://region-project.cloudfunctions.net/tokenizeCardDirect', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${idToken}`,
+      'User-Agent': 'Linku/1.0.0 iOS',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      user_id: user.uid,
+      provider: 'stripe',
+      card_number: '4242424242424242',
+      card_exp_month: 12,
+      card_exp_year: 2025,
+      card_cvv: '123',
+      card_holder_name: 'Juan Pérez',
+      set_as_default: true,
+    }),
+  });
+  
+  const result = await response.json();
+  console.log(result); // { success: true, data: { token_id: '...' } }
+};
 ```
 
 ### 2. Crear Sesión de Tokenización (Transbank)
@@ -376,9 +424,9 @@ const result = await processPayment({
 
 ### 7. Reembolsar Pago
 
-**Function:** `refundPayment`
+**Endpoint:** `POST /refundPayment`
 
-**Request:**
+**Request Body:**
 ```typescript
 {
   payment_id: string;
@@ -386,7 +434,107 @@ const result = await processPayment({
 }
 ```
 
+### 8. Obtener Ubicación de Ejecución
+
+**Endpoint:** `GET /getExecutionLocation`
+
+**Headers:**
+```javascript
+{
+  'Authorization': 'Bearer <firebase-id-token>',
+  'User-Agent': 'Linku/1.0.0'
+}
+```
+
+**Response:**
+```typescript
+{
+  success: true,
+  data: {
+    // App Engine location headers
+    city: string | null;
+    region: string | null;
+    country: string | null;
+    datacenter: string | null;
+    
+    // Additional location info
+    cloudflareCountry: string | null;
+    cloudTraceContext: string | null;
+    
+    // Network info
+    forwardedFor: string | null;
+    realIp: string | null;
+    clientIp: string;
+    
+    // Server info
+    serverName: string | null;
+    userAgent: string;
+    
+    // Formatted location
+    formattedLocation: string | null;
+    
+    // Timestamp
+    timestamp: string;
+  }
+}
+```
+
+**Ejemplo:**
+```typescript
+const getLocation = async () => {
+  const user = auth().currentUser;
+  const idToken = await user.getIdToken();
+  
+  const response = await fetch('https://region-project.cloudfunctions.net/getExecutionLocation', {
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${idToken}`,
+      'User-Agent': 'Linku/1.0.0 iOS',
+    },
+  });
+  
+  const result = await response.json();
+  console.log(result.data.formattedLocation); // "Santiago, RM, Chile"
+};
+```
+
 ## 🔐 Seguridad
+
+### 🚨 **CAMBIOS IMPORTANTES DE AUTENTICACIÓN**
+
+#### **Migración de onCall a onRequest**
+
+Las Cloud Functions ahora usan **HTTP Request** en lugar de **Callable Functions**:
+
+**❌ Antes (onCall):**
+```typescript
+const tokenize = httpsCallable(functions, 'tokenizeCardDirect');
+const result = await tokenize(data);
+```
+
+**✅ Ahora (onRequest):**
+```typescript
+const idToken = await auth().currentUser.getIdToken();
+
+const response = await fetch('https://region-project.cloudfunctions.net/tokenizeCardDirect', {
+  method: 'POST',
+  headers: {
+    'Authorization': `Bearer ${idToken}`,
+    'User-Agent': 'Linku/1.0.0 iOS',
+    'Content-Type': 'application/json',
+  },
+  body: JSON.stringify(data),
+});
+
+const result = await response.json();
+```
+
+#### **Validaciones de Seguridad**
+
+1. **Bearer Token:** Header `Authorization: Bearer <firebase-id-token>`
+2. **User-Agent:** Debe comenzar con `"Linku"`
+3. **Request Metadata:** Todos los headers se guardan para auditoría
+4. **Execution Location:** Detecta y registra ubicación geográfica
 
 ### Reglas de Firestore
 
@@ -492,7 +640,7 @@ Tarjetas de prueba proporcionadas por Transbank
   service_request_id: string;
   amount: number;
   currency: string;
-  provider: "stripe" | "transbank";
+  provider: "stripe" | "transbank" | "mercadopago";
   provider_payment_id?: string;
   status: "pending" | "processing" | "completed" | "failed" | "cancelled" | "refunded";
   token_id?: string;
@@ -501,7 +649,24 @@ Tarjetas de prueba proporcionadas por Transbank
   created_at: Timestamp;
   updated_at: Timestamp;
   completed_at?: Timestamp;
-  metadata?: object;
+  
+  // 📍 Metadata de la request de pago
+  metadata: {
+    ip: string;
+    userAgent: string;
+    executionLocation?: string;
+    timestamp: Timestamp;
+    [key: string]: any;
+  };
+  
+  // Metadata de reembolso (si aplica)
+  refund_metadata?: {
+    ip: string;
+    userAgent: string;
+    executionLocation?: string;
+    timestamp: Timestamp;
+  };
+  refunded_at?: Timestamp;
 }
 ```
 
@@ -510,16 +675,37 @@ Tarjetas de prueba proporcionadas por Transbank
 {
   session_id: string;
   user_id: string;
-  provider: "stripe" | "transbank";
+  provider: "stripe" | "transbank" | "mercadopago";
+  type: "direct" | "redirect";
   status: "pending" | "completed" | "failed" | "expired";
   redirect_url?: string;
-  return_url: string;
+  return_url?: string;
   token_id?: string;
   error_message?: string;
   created_at: Timestamp;
-  expires_at: Timestamp;
+  expires_at?: Timestamp;
   completed_at?: Timestamp;
-  metadata?: object;
+  
+  // 📍 Metadata de la request
+  metadata: {
+    ip: string;
+    userAgent: string;
+    origin?: string;
+    referer?: string;
+    acceptLanguage?: string;
+    executionLocation?: string; // "Santiago, RM, Chile"
+    timestamp: Timestamp;
+    // Headers adicionales (x-appengine-*, x-forwarded-*, etc.)
+    [key: string]: any;
+  };
+  
+  // Metadata de completación (solo para redirect)
+  completion_metadata?: {
+    ip: string;
+    userAgent: string;
+    executionLocation?: string;
+    timestamp: Timestamp;
+  };
 }
 ```
 

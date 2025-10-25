@@ -6,6 +6,9 @@ import * as admin from "firebase-admin";
 import * as crypto from "node:crypto";
 import { PaymentGatewayError } from "../types";
 
+// Export auth utilities
+export * from './auth';
+
 // Initialize Firebase Admin
 if (!admin.apps.length) {
   admin.initializeApp();
